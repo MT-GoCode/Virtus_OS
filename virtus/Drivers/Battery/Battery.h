@@ -3,16 +3,12 @@
 
 #include "XPowersLib.h"
 
-#include "BaseDriver.h"
+#include "Drivers/BaseDriver.h"
 
-class System;
-class Screen;
-
-class Battery : BaseDriver, XPowersAXP2101 {
-public:
+class Battery : BaseDriver, public XPowersAXP2101 {
     friend class System;
     friend class Screen;
-    Battery();
+public:
 protected:
     virtual int handle_basic_boot() override;
     // virtual int handle_first_time_boot() override;

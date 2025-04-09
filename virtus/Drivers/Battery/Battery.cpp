@@ -1,7 +1,5 @@
 #include "Battery.h"
 
-Battery::Battery() {} 
-
 int Battery::handle_basic_boot() {
 
     bool res =  XPowersAXP2101::init(Wire, BOARD_I2C_SDA, BOARD_I2C_SCL);

@@ -1,6 +1,5 @@
 #include "Screen.h"
-
-Screen::Screen() {} 
+#include "Drivers/Screen/LV/LV_Helper.h"
 
 int Screen::handle_basic_boot() {
 
@@ -12,14 +11,14 @@ int Screen::handle_basic_boot() {
 #endif
 
     TFT_eSPI::init();
+    setBrightness(50);
     setRotation(2);
-    setTextDatum(MC_DATUM);
-    setTextFont(2);
     fillScreen(TFT_BLACK);
 
-    fillScreen(TFT_BLACK);
-    drawString("Hello T-Watch", 120, 120);
-    setBrightness(50);
+    TouchDrvFT6X36::begin(Wire1, FT6X36_SLAVE_ADDRESS, BOARD_TOUCH_SDA, BOARD_TOUCH_SCL);
+    interruptTrigger();
+
+    beginLvglHelper(false);
     return 0;
 }
 

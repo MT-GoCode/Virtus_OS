@@ -1,0 +1,1009 @@
+virtus\EasySerial.cpp-------------------------------------------------
+#include "EasySerial.h"
+
+EasySerial::EasySerial(uint32_t baud_rate) : baud_rate_(baud_rate) {
+    begin();
+}
+
+void EasySerial::begin() {
+    Serial.begin(baud_rate_);
+    while (!Serial) {
+        ; // Wait for Serial to initialize (optional, useful for some boards)
+    }
+}
+
+void EasySerial::printTimestamp() {
+    unsigned long ms = millis();
+    Serial.print("[");
+    Serial.print(ms / 1000); // Seconds
+    Serial.print(".");
+    if (ms % 1000 < 100) Serial.print("0");
+    if (ms % 1000 < 10) Serial.print("0");
+    Serial.print(ms % 1000); // Milliseconds
+    Serial.print("] ");
+}
+
+void EasySerial::print(const char* message) {
+    printTimestamp();
+    Serial.print(message);
+}
+
+void EasySerial::print(const String& message) {
+    printTimestamp();
+    Serial.print(message);
+}
+
+void EasySerial::print(int value) {
+    printTimestamp();
+    Serial.print(value);
+}
+
+void EasySerial::print(unsigned long value) {
+    printTimestamp();
+    Serial.print(value);
+}
+
+void EasySerial::println(const char* message) {
+    printTimestamp();
+    Serial.println(message);
+}
+
+void EasySerial::println(const String& message) {
+    printTimestamp();
+    Serial.println(message);
+}
+
+void EasySerial::println(int value) {
+    printTimestamp();
+    Serial.println(value);
+}
+
+void EasySerial::println(unsigned long value) {
+    printTimestamp();
+    Serial.println(value);
+}
+
+
+virtus\EasySerial.h-------------------------------------------------
+#ifndef SERIAL_DEBUGGER_H
+#define SERIAL_DEBUGGER_H
+
+#include <Arduino.h>
+
+class EasySerial {
+public:
+    // Constructor: Initialize with a baud rate
+    EasySerial(uint32_t baud_rate = 115200);
+
+    // Initialize the Serial port
+    void begin();
+
+    // Print with timestamp (no newline)
+    void print(const char* message);
+    void print(const String& message);
+    void print(int value);
+    void print(unsigned long value);
+
+    // Print with timestamp and newline
+    void println(const char* message);
+    void println(const String& message);
+    void println(int value);
+    void println(unsigned long value);
+
+private:
+    uint32_t baud_rate_; // Baud rate for Serial communication
+    void printTimestamp(); // Helper to print the timestamp
+};
+
+extern EasySerial es;
+
+#endif // SERIAL_DEBUGGER_H
+
+virtus\System.cpp-------------------------------------------------
+#include "System.h"
+
+#include "EasySerial.h"
+EasySerial es;
+
+// Drivers
+Battery battery;
+Screen screen;
+
+// Services
+WorkManager work_manager;
+ScreenManager screen_manager;
+
+// State Flags
+static bool basic_boot_complete;
+RTC_DATA_ATTR bool first_time_boot_complete; // zero-initialized on battery drain or restart
+static bool os_init_complete;
+static bool inactive;
+
+void System::resolve() {
+    while (true) {
+        if (!basic_boot_complete) {
+            basic_boot();
+        } else if (!first_time_boot_complete) {
+            first_time_boot();
+        } else {
+            break;
+        }
+    }
+}
+
+void System::basic_boot() {
+    es.println("enter basic_boot");
+
+    btStop();
+    setCpuFrequencyMhz(160);
+    Serial.begin(115200);
+    pinMode(BOARD_TOUCH_INT, INPUT);
+    Wire.begin(BOARD_I2C_SDA, BOARD_I2C_SCL);
+    Wire1.begin(BOARD_TOUCH_SDA, BOARD_TOUCH_SCL);
+
+    battery.handle_basic_boot();
+    screen.handle_basic_boot();
+    screen_manager.handle_basic_boot(first_time_boot_complete);
+
+    basic_boot_complete = true;
+
+    es.println("reach end of basic_boot");
+}
+
+void System::first_time_boot() {
+    es.println("entering first time boot");
+    work_manager.add_app_job(0); // first-time boot UI
+
+    while (true) {        
+        screen_manager.step();
+        delay(2);
+        // purposely blocking forever -- just want to show the UI from hereon out.
+    }
+    es.println("exiting first time boot");
+}
+
+virtus\System.h-------------------------------------------------
+#ifndef SYSTEM_H
+#define SYSTEM_H
+
+#include <Arduino.h>
+
+#include <FFat.h>
+#include <FS.h>
+#include <Wire.h>
+#include <SensorDRV2605.hpp>
+#include <driver/i2s.h>
+#include <driver/temp_sensor.h>
+
+#include "utilities.h"
+
+#include "Drivers/Battery/Battery.h"
+#include "Drivers/Screen/Screen.h"
+
+#include "Services/ScreenManager/ScreenManager.h"
+#include "Services/WorkManager/WorkManager.h"
+
+#define LEDC_BACKLIGHT_CHANNEL      3
+#define LEDC_BACKLIGHT_BIT_WIDTH    8
+#define LEDC_BACKLIGHT_FREQ         1000
+
+class System {
+public:
+    static void resolve();
+
+private:
+    static void basic_boot();
+    static void first_time_boot();
+    static void os_init();
+    static void active_loop();
+};
+
+extern System sys;
+
+#endif
+
+virtus\utilities.h-------------------------------------------------
+#pragma once
+
+#define BOARD_TFT_WIDTH             (240)
+#define BOARD_TFT_HEIGHT             (240)
+
+// ST7789
+#define BOARD_TFT_MISO              (-1)
+#define BOARD_TFT_MOSI              (13)
+#define BOARD_TFT_SCLK              (18)
+#define BOARD_TFT_CS                (12)
+#define BOARD_TFT_DC                (38)
+#define BOARD_TFT_RST               (-1)
+#define BOARD_TFT_BL                (45)
+
+// Touch
+#define BOARD_TOUCH_SDA             (39)
+#define BOARD_TOUCH_SCL             (40)
+#define BOARD_TOUCH_INT             (16)
+
+//BMA423,PCF8563,AXP2101,DRV2605L
+#define BOARD_I2C_SDA               (10)
+#define BOARD_I2C_SCL               (11)
+
+// PCF8563 Interrupt
+#define BOARD_RTC_INT_PIN           (17)
+// AXP2101 Interrupt
+#define BOARD_PMU_INT               (21)
+// BMA423 Interrupt
+#define BOARD_BMA423_INT1           (14)
+
+// MAX98357A
+#define BOARD_DAC_IIS_BCK           (48)
+#define BOARD_DAC_IIS_WS            (15)
+#define BOARD_DAC_IIS_DOUT          (46)
+
+
+virtus\virtus.ino-------------------------------------------------
+#include "System.h"
+
+System sys;
+
+void setup()
+{
+    sys.resolve();
+}
+
+void loop(){
+
+}
+
+virtus\Apps\AppRegistry.h-------------------------------------------------
+#ifndef APPREGISTRY_H
+#define APPREGISTRY_H
+
+#include "Apps/BaseApp.h"
+#include "Apps/System/FirstTimeBootMenu/FirstTimeBootMenu.h"
+
+inline FirstTimeBootMenu first_time_boot_menu;
+
+inline BaseApp* app_registry[] = {
+    &first_time_boot_menu,
+};
+
+#endif
+
+virtus\Apps\BaseApp.h-------------------------------------------------
+#ifndef BASEAPP_H
+#define BASEAPP_H
+
+#include <lvgl.h>
+
+class BaseApp {
+public:
+    virtual ~BaseApp() {};
+
+    virtual int mount(lv_obj_t* canvas);
+    virtual int unmount(lv_obj_t* canvas);
+};
+
+#endif
+
+virtus\Apps\System\FirstTimeBootMenu\FirstTimeBootMenu.cpp-------------------------------------------------
+#include "Apps/System/FirstTimeBootMenu/FirstTimeBootMenu.h"
+
+#include <lvgl.h>
+
+int FirstTimeBootMenu::mount(lv_obj_t* canvas) {
+    lv_obj_set_size(canvas, LV_HOR_RES, LV_VER_RES);
+    lv_obj_center(canvas);
+    lv_obj_set_flex_flow(canvas, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(canvas, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_gap(canvas, 12, 0);
+
+    lv_obj_t* label = lv_label_create(canvas);
+    lv_label_set_text(label, "Cold Boot Menu");
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(label, LV_PCT(100));
+
+    // Create the button
+    lv_obj_t* button = lv_btn_create(canvas);
+    lv_obj_set_size(button, 120, 40);
+
+    // Define a style for the button
+    static lv_style_t btn_style;
+    lv_style_init(&btn_style);
+    lv_style_set_bg_opa(&btn_style, LV_OPA_COVER);          // Fully opaque background
+    lv_style_set_bg_color(&btn_style, lv_color_hex(0x007BFF)); // Default: bright blue (#007BFF)
+    lv_style_set_radius(&btn_style, 8);                     // Rounded corners
+    lv_style_set_shadow_width(&btn_style, 10);              // Slight shadow for depth
+    lv_style_set_shadow_color(&btn_style, lv_color_hex(0x808080)); // Medium gray shadow (#808080)
+    lv_style_set_shadow_ofs_y(&btn_style, 2);
+
+    // Define a pressed state style
+    static lv_style_t btn_pressed_style;
+    lv_style_init(&btn_pressed_style);
+    lv_style_set_bg_opa(&btn_pressed_style, LV_OPA_COVER);
+    lv_style_set_bg_color(&btn_pressed_style, lv_color_hex(0x0059B3)); // Darker blue on press (#0059B3)
+
+    // Apply styles to the button
+    lv_obj_add_style(button, &btn_style, LV_STATE_DEFAULT);        // Default state
+    lv_obj_add_style(button, &btn_pressed_style, LV_STATE_PRESSED); // Pressed state
+
+    // Add label to the button
+    lv_obj_t* btn_label = lv_label_create(button);
+    lv_label_set_text(btn_label, "Get Started");
+    lv_obj_center(btn_label);
+    lv_obj_set_style_text_color(btn_label, lv_color_white(), 0);   // White text for contrast
+
+    return 0;
+}
+
+int FirstTimeBootMenu::unmount(lv_obj_t* canvas) {
+    lv_obj_clean(canvas);
+    return 0;
+}
+
+
+
+virtus\Apps\System\FirstTimeBootMenu\FirstTimeBootMenu.h-------------------------------------------------
+#ifndef FIRSTTIMEBOOTMENU_H
+#define FIRSTTIMEBOOTMENU_H
+
+#include "Apps/BaseApp.h"
+
+class FirstTimeBootMenu : public BaseApp {
+public:
+    virtual int mount(lv_obj_t* canvas);
+    virtual int unmount(lv_obj_t* canvas);
+};
+
+extern FirstTimeBootMenu first_time_boot_menu;
+
+#endif
+
+virtus\Drivers\BaseDriver.h-------------------------------------------------
+#ifndef BASEDRIVER_H
+#define BASEDRIVER_H
+
+#include "utilities.h"
+
+class  BaseDriver {
+public:
+protected:
+    virtual int handle_basic_boot() { return 0; }
+    virtual int handle_first_time_boot() { return 0; }
+    virtual int handle_os_init() { return 0; }
+    virtual int handle_active_loop() { return 0; }
+
+};
+
+#endif
+
+virtus\Drivers\Battery\Battery.cpp-------------------------------------------------
+#include "Battery.h"
+
+int Battery::handle_basic_boot() {
+
+    bool res =  XPowersAXP2101::init(Wire, BOARD_I2C_SDA, BOARD_I2C_SCL);
+    if (!res) {
+        return 1;
+    }
+
+    // Set the minimum common working voltage of the PMU VBUS input,
+    // below this value will turn off the PMU
+    setVbusVoltageLimit(XPOWERS_AXP2101_VBUS_VOL_LIM_4V36);
+
+    // Set the maximum current of the PMU VBUS input,
+    // higher than this value will turn off the PMU
+    setVbusCurrentLimit(XPOWERS_AXP2101_VBUS_CUR_LIM_900MA);
+
+    // Set VSY off voltage as 2600mV , Adjustment range 2600mV ~ 3300mV
+    setSysPowerDownVoltage(2600);
+
+
+    // ! ESP32S3 VDD, Don't change
+    // setDC1Voltage(3300);
+
+    //! RTC VBAT , Don't change
+    setALDO1Voltage(3300);
+
+    //! TFT BACKLIGHT VDD , Don't change
+    setALDO2Voltage(3300);
+
+    //!Screen touch VDD , Don't change
+    setALDO3Voltage(3300);
+
+    //! Radio VDD , Don't change
+    setALDO4Voltage(3300);
+
+    //!DRV2605 enable
+    setBLDO2Voltage(3300);
+
+    //! GPS Power
+    setDC3Voltage(3300);
+    enableDC3();
+
+    //! No use
+    disableDC2();
+    // disableDC3();
+    disableDC4();
+    disableDC5();
+    disableBLDO1();
+    disableCPUSLDO();
+    disableDLDO1();
+    disableDLDO2();
+
+
+
+    enableALDO1();  //! RTC VBAT
+    enableALDO2();  //! TFT BACKLIGHT   VDD
+    enableALDO3();  //! Screen touch VDD
+    enableALDO4();  //! Radio VDD
+    enableBLDO2();  //! drv2605 enable
+
+
+    // if (stream) {
+    //     log_println("DCDC=======================================================================");
+    //     stream->printf("DC1  : %s   Voltage:%u mV \n", isEnableDC1()  ? "+" : "-", getDC1Voltage());
+    //     stream->printf("DC2  : %s   Voltage:%u mV \n", isEnableDC2()  ? "+" : "-", getDC2Voltage());
+    //     stream->printf("DC3  : %s   Voltage:%u mV \n", isEnableDC3()  ? "+" : "-", getDC3Voltage());
+    //     stream->printf("DC4  : %s   Voltage:%u mV \n", isEnableDC4()  ? "+" : "-", getDC4Voltage());
+    //     stream->printf("DC5  : %s   Voltage:%u mV \n", isEnableDC5()  ? "+" : "-", getDC5Voltage());
+    //     log_println("ALDO=======================================================================");
+    //     stream->printf("ALDO1: %s   Voltage:%u mV\n", isEnableALDO1()  ? "+" : "-", getALDO1Voltage());
+    //     stream->printf("ALDO2: %s   Voltage:%u mV\n", isEnableALDO2()  ? "+" : "-", getALDO2Voltage());
+    //     stream->printf("ALDO3: %s   Voltage:%u mV\n", isEnableALDO3()  ? "+" : "-", getALDO3Voltage());
+    //     stream->printf("ALDO4: %s   Voltage:%u mV\n", isEnableALDO4()  ? "+" : "-", getALDO4Voltage());
+    //     log_println("BLDO=======================================================================");
+    //     stream->printf("BLDO1: %s   Voltage:%u mV\n", isEnableBLDO1()  ? "+" : "-", getBLDO1Voltage());
+    //     stream->printf("BLDO2: %s   Voltage:%u mV\n", isEnableBLDO2()  ? "+" : "-", getBLDO2Voltage());
+    //     log_println("CPUSLDO====================================================================");
+    //     stream->printf("CPUSLDO: %s Voltage:%u mV\n", isEnableCPUSLDO() ? "+" : "-", getCPUSLDOVoltage());
+    //     log_println("DLDO=======================================================================");
+    //     stream->printf("DLDO1: %s   Voltage:%u mV\n", isEnableDLDO1()  ? "+" : "-", getDLDO1Voltage());
+    //     stream->printf("DLDO2: %s   Voltage:%u mV\n", isEnableDLDO2()  ? "+" : "-", getDLDO2Voltage());
+    //     log_println("===========================================================================");
+    // }
+
+
+    // Set the time of pressing the button to turn off
+    setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
+
+    // Set the button power-on press time
+    setPowerKeyPressOnTime(XPOWERS_POWERON_128MS);
+
+
+    // It is necessary to disable the detection function of the TS pin on the board
+    // without the battery temperature detection function, otherwise it will cause abnormal charging
+    disableTSPinMeasure();
+
+
+    // Enable internal ADC detection
+    enableBattDetection();
+    enableVbusVoltageMeasure();
+    enableBattVoltageMeasure();
+    enableSystemVoltageMeasure();
+
+
+    //t-watch no chg led
+    setChargingLedMode(XPOWERS_CHG_LED_OFF);
+
+
+    disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
+
+    /*
+    Battery insert/remove.
+    USB plug/unplug.
+    Short/long power button press.
+    Charging start/done.
+    These pull BOARD_PMU_INT low when triggered.
+    */
+
+    // Enable the required interrupt function
+    enableIRQ(
+        XPOWERS_AXP2101_BAT_INSERT_IRQ    | XPOWERS_AXP2101_BAT_REMOVE_IRQ      |   //BATTERY
+        XPOWERS_AXP2101_VBUS_INSERT_IRQ   | XPOWERS_AXP2101_VBUS_REMOVE_IRQ     |   //VBUS
+        XPOWERS_AXP2101_PKEY_SHORT_IRQ    | XPOWERS_AXP2101_PKEY_LONG_IRQ       |   //POWER KEY
+        XPOWERS_AXP2101_BAT_CHG_DONE_IRQ  | XPOWERS_AXP2101_BAT_CHG_START_IRQ       //CHARGE
+    );
+
+    // Clear all interrupt flags
+    XPowersAXP2101::clearIrqStatus();
+
+    // Set the precharge charging current
+    setPrechargeCurr(XPOWERS_AXP2101_PRECHARGE_50MA);
+    // Set constant current charge current limit
+    setChargerConstantCurr(XPOWERS_AXP2101_CHG_CUR_300MA);
+    // Set stop charging termination current
+    setChargerTerminationCurr(XPOWERS_AXP2101_CHG_ITERM_25MA);
+
+    // Set charge cut-off voltage
+    setChargeTargetVoltage(XPOWERS_AXP2101_CHG_VOL_4V35);
+
+    // Set RTC Battery voltage to 3.3V
+    setButtonBatteryChargeVoltage(3300);
+
+    enableButtonBatteryCharge();
+
+    return 0;
+}
+
+virtus\Drivers\Battery\Battery.h-------------------------------------------------
+#ifndef BATTERY_H
+#define BATTERY_H
+
+#include "XPowersLib.h"
+
+#include "Drivers/BaseDriver.h"
+
+class Battery : BaseDriver, public XPowersAXP2101 {
+    friend class System;
+    friend class Screen;
+public:
+protected:
+    virtual int handle_basic_boot() override;
+    // virtual int handle_first_time_boot() override;
+    // virtual int handle_os_init() override;
+    // virtual int handle_active_loop() override;
+};
+
+extern Battery battery;
+
+#endif
+
+virtus\Drivers\Screen\Screen.cpp-------------------------------------------------
+#include "Screen.h"
+#include "Drivers/Screen/LV/LV_Helper.h"
+
+int Screen::handle_basic_boot() {
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5,0,0)
+    ledcAttach(BOARD_TFT_BL, LEDC_BACKLIGHT_FREQ, LEDC_BACKLIGHT_BIT_WIDTH);
+#else
+    ledcSetup(LEDC_BACKLIGHT_CHANNEL, LEDC_BACKLIGHT_FREQ, LEDC_BACKLIGHT_BIT_WIDTH);
+    ledcAttachPin(BOARD_TFT_BL, LEDC_BACKLIGHT_CHANNEL);
+#endif
+
+    TFT_eSPI::init();
+    setBrightness(50);
+    setRotation(2);
+    fillScreen(TFT_BLACK);
+
+    TouchDrvFT6X36::begin(Wire1, FT6X36_SLAVE_ADDRESS, BOARD_TOUCH_SDA, BOARD_TOUCH_SCL);
+    interruptTrigger();
+
+    beginLvglHelper(false);
+    return 0;
+}
+
+void Screen::setBrightness(uint8_t level)
+{
+    if (!level) {
+        battery.disableALDO2();
+        writecommand(0x10);  //display sleep
+        setPowerMode(PMODE_MONITOR);
+    }
+    if (!brightness && level != 0) {
+        battery.enableALDO2();
+        writecommand(0x11);  //display wakeup
+    }
+    brightness = level;
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5,0,0)
+    ledcWrite(BOARD_TFT_BL, brightness);
+#else
+    ledcWrite(LEDC_BACKLIGHT_CHANNEL, brightness);
+#endif
+}
+
+virtus\Drivers\Screen\Screen.h-------------------------------------------------
+#ifndef SCREEN_H
+#define SCREEN_H
+
+#include <TFT_eSPI.h>
+#include <TouchDrvFT6X36.hpp>
+#include <lvgl.h>
+
+#include "Drivers/BaseDriver.h"
+#include "Drivers/Battery/Battery.h"
+#include "utilities.h"
+
+#define LEDC_BACKLIGHT_CHANNEL      3
+#define LEDC_BACKLIGHT_BIT_WIDTH    8
+#define LEDC_BACKLIGHT_FREQ         1000
+
+class Screen : BaseDriver, public TFT_eSPI, public TouchDrvFT6X36 {
+    friend class System;
+
+public:
+    void begin_lvgl(bool debug = false);
+    void update_lvgl();
+
+protected:
+    virtual int handle_basic_boot() override;
+    void setBrightness(uint8_t level);
+
+    uint8_t brightness;
+
+private:
+    static void disp_flush(lv_disp_drv_t* disp, const lv_area_t* area, lv_color_t* color_p);
+    static void touchpad_read(lv_indev_drv_t* indev_driver, lv_indev_data_t* data);
+
+    static Screen* instance;
+    static lv_disp_drv_t disp_drv;
+    static lv_indev_drv_t indev_drv;
+    static lv_disp_draw_buf_t draw_buf;
+
+#ifdef BOARD_HAS_PSRAM
+    static lv_color_t* buf;
+    static lv_color_t* buf1;
+#else
+    static lv_color_t buf[];
+    static lv_color_t buf1[];
+#endif
+};
+
+extern Screen screen;
+
+#endif
+
+
+virtus\Drivers\Screen\LV\LV_Helper.cpp-------------------------------------------------
+/**
+ * @file      LV_Helper.cpp
+ * @author    Lewis He (lewishe@outlook.com)
+ * @license   MIT
+ * @copyright Copyright (c) 2023  Shenzhen Xinyuan Electronic Technology Co., Ltd
+ * @date      2023-04-28
+ *
+ */
+
+#include "Drivers/Screen/Screen.h"
+#include <lvgl.h>
+
+#include "EasySerial.h"
+
+static lv_disp_drv_t disp_drv;
+static lv_indev_drv_t  indev_drv;
+static lv_disp_draw_buf_t draw_buf;
+
+void updateLvglHelper()
+{
+    lv_disp_drv_update(lv_disp_get_default(), &disp_drv);
+}
+
+
+/* Display flushing */
+#if LV_VERSION_CHECK(9,0,0)
+void disp_flush( lv_disp_t *disp, const lv_area_t *area, lv_color_t *color_p )
+#else
+void disp_flush( lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p )
+#endif
+{
+    uint32_t w = ( area->x2 - area->x1 + 1 );
+    uint32_t h = ( area->y2 - area->y1 + 1 );
+
+    screen.startWrite();
+    screen.setAddrWindow( area->x1, area->y1, w, h );
+
+#if LV_VERSION_CHECK(9,0,0)
+    // int32_t x;
+    // int32_t y;
+    // for (y = area->y1; y <= area->y2; y++) {
+    //     for (x = area->x1; x <= area->x2; x++) {
+    //         screen.drawPixel(x, y, *(uint16_t *)(color_p));
+    //         color_p++;
+    //     }
+    // }
+    screen.pushColors(( uint16_t * )color_p, w * h);
+#else
+    screen.pushColors(( uint16_t * )&color_p->full, w * h, true );
+#endif
+    screen.endWrite();
+
+    lv_disp_flush_ready( disp );
+}
+
+/*Read the touchpad*/
+#if LV_VERSION_CHECK(9,0,0)
+void touchpad_read( lv_indev_t *indev_driver, lv_indev_data_t *data )
+#else
+void touchpad_read( lv_indev_drv_t *indev_driver, lv_indev_data_t *data )
+#endif
+{
+    int16_t x, y;
+    bool touched = screen.getPoint(&x, &y);
+    if ( !touched ) {
+        data->state = LV_INDEV_STATE_REL;
+    } else {
+        es.println("TEST TO SEE IF LVHELPER CAN ACCESS TFT_WIDTH");
+        es.println(TFT_WIDTH);
+        es.println(TFT_HEIGHT);
+        switch (screen.getRotation()) {
+        case 0:
+            data->point.x = TFT_WIDTH - x;
+            data->point.y = TFT_HEIGHT - y;
+            break;
+        case 1:
+            data->point.x = TFT_WIDTH - y;
+            data->point.y =  x;
+            break;
+        case 3:
+            data->point.x = y;
+            data->point.y = TFT_HEIGHT - x;
+            break;
+        case 2:
+        default:
+            data->point.x = x;
+            data->point.y = y;
+        }
+        es.println("Touch detected - X:" + String(data->point.x) + " Y:" + String(data->point.y));
+        data->state = LV_INDEV_STATE_PR;
+    }
+}
+
+#ifndef BOARD_HAS_PSRAM
+static const size_t lv_buffer_size = (BOARD_TFT_WIDTH * 50);
+static lv_color_t buf[ lv_buffer_size ];
+static lv_color_t buf1[ lv_buffer_size ];
+#else
+static const size_t lv_buffer_size = BOARD_TFT_WIDTH * BOARD_TFT_HEIGHT * sizeof(lv_color_t);
+static lv_color_t *buf  = NULL;
+static lv_color_t *buf1  = NULL;
+#endif
+
+#if LV_USE_LOG
+#if LV_VERSION_CHECK(9,0,0)
+void lv_log_print_g_cb(lv_log_level_t level, const char *buf)
+#else
+void lv_log_print_g_cb(const char *buf)
+#endif
+{
+    Serial.println(buf);
+    Serial.flush();
+}
+#endif //LV_USE_LOG
+
+void beginLvglHelper(bool debug)
+{
+    lv_init();
+
+#if LV_USE_LOG
+    if (debug) {
+        lv_log_register_print_cb(lv_log_print_g_cb);
+    }
+#endif //LV_USE_LOG
+
+#ifdef BOARD_HAS_PSRAM
+    buf = (lv_color_t *)ps_malloc(lv_buffer_size);
+    if (!buf) {
+        while (1) {
+            delay(1000);
+            Serial.println("Memory buffer failed!");
+        }
+    }
+    buf1 = (lv_color_t *)ps_malloc(lv_buffer_size);
+    if (!buf1) {
+        while (1) {
+            delay(1000);
+            Serial.println("Memory buffer failed!");
+        }
+    }
+#endif //BOARD_HAS_PSRAM
+
+#if LV_VERSION_CHECK(9,0,0)
+    lv_disp_t *disp =  lv_disp_create(BOARD_TFT_WIDTH, BOARD_TFT_HEIGHT);
+
+#ifdef BOARD_HAS_PSRAM
+    lv_disp_set_draw_buffers(disp, buf, buf1, BOARD_TFT_WIDTH * BOARD_TFT_HEIGHT, LV_DISP_RENDER_MODE_PARTIAL);
+#else
+    lv_disp_set_draw_buffers(disp, buf, NULL, sizeof(buf), LV_DISP_RENDER_MODE_PARTIAL);
+#endif
+    // lv_disp_set_driver_data()/
+    lv_disp_set_res(disp, BOARD_TFT_WIDTH, BOARD_TFT_HEIGHT);
+    lv_disp_set_physical_res(disp, BOARD_TFT_WIDTH, BOARD_TFT_HEIGHT);
+    lv_disp_set_flush_cb(disp, disp_flush);
+
+    lv_indev_t *indev = lv_indev_create();
+    lv_indev_set_read_cb(indev, touchpad_read);
+    lv_indev_set_disp(indev, disp);
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    // lv_indev_set_driver_data();
+
+#else
+
+#ifdef BOARD_HAS_PSRAM
+    lv_disp_draw_buf_init( &draw_buf, buf, buf1, lv_buffer_size);
+#else
+    lv_disp_draw_buf_init( &draw_buf, buf, buf1, lv_buffer_size );
+#endif
+
+    /*Initialize the display*/
+    lv_disp_drv_init( &disp_drv );
+    /*Change the following line to your display resolution*/
+    disp_drv.hor_res = BOARD_TFT_WIDTH;
+    disp_drv.ver_res = BOARD_TFT_HEIGHT;
+    disp_drv.flush_cb = disp_flush;
+    disp_drv.draw_buf = &draw_buf;
+
+    lv_disp_drv_register( &disp_drv );
+
+    /*Initialize the input device driver*/
+    lv_indev_drv_init( &indev_drv );
+    indev_drv.type = LV_INDEV_TYPE_POINTER;
+    indev_drv.read_cb = touchpad_read;
+    lv_indev_drv_register( &indev_drv );
+
+#endif
+}
+
+virtus\Drivers\Screen\LV\LV_Helper.h-------------------------------------------------
+/**
+ * @file      LV_Helper.h
+ * @author    Lewis He (lewishe@outlook.com)
+ * @license   MIT
+ * @copyright Copyright (c) 2023  Shenzhen Xinyuan Electronic Technology Co., Ltd
+ * @date      2023-04-28
+ *
+ */
+
+#pragma once
+
+void beginLvglHelper(bool debug = false);
+void updateLvglHelper();
+
+
+virtus\Services\BaseService.h-------------------------------------------------
+#ifndef BASESERVICE_H
+#define BASESERVICE_H
+
+#include <Arduino.h>
+
+#include "utilities.h"
+
+class  BaseService {
+public:
+protected:
+    virtual int handle_basic_boot() { return 0; }
+    virtual int handle_first_time_boot() { return 0; }
+    virtual int handle_os_init() { return 0; }
+    virtual int handle_active_loop() { return 0; }
+};
+
+#endif
+
+virtus\Services\Mailbox\Mailbox.h-------------------------------------------------
+
+
+virtus\Services\ScreenManager\ScreenManager.cpp-------------------------------------------------
+#include "Services/ScreenManager/ScreenManager.h"
+
+#include <lvgl.h>
+#include "Apps/AppRegistry.h"
+#include <Arduino.h>
+
+#include "EasySerial.h"
+
+int ScreenManager::handle_basic_boot(bool first_time_boot_complete) {
+    es.println("enter ScreenManager::handle_basic_boot");
+    if (!first_time_boot_complete) {
+        es.println("enter ScreenManager::handle_basic_boot's if statement");
+
+        state = BASIC_BOOT;
+
+        lv_obj_t* scr = lv_scr_act();      // Get the active screen
+        lv_obj_clean(scr);                // Clear any default content
+
+        // Set black background
+        lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+
+        // Create centered label
+        lv_obj_t* label = lv_label_create(scr);
+        lv_label_set_text(label, "Virtus OS");
+        lv_obj_set_style_text_font(label, &lv_font_montserrat_28, 0);  // Larger font
+        lv_obj_set_style_text_color(label, lv_palette_main(LV_PALETTE_GREEN), 0);  // Green
+        lv_obj_center(label);
+
+        // Flush to display
+        lv_task_handler();
+        delay(2000);
+        return 0;
+    }
+    return 0;
+}
+
+int ScreenManager::mount_app(int id) {
+    es.println("entering ScreenManager::mount_app");
+
+    lv_obj_t* frame = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(frame, LV_PCT(100), LV_PCT(100));
+    lv_obj_clear_flag(frame, LV_OBJ_FLAG_SCROLLABLE);
+
+    app_registry[id]->mount(frame);
+    es.println("exiting ScreenManager::mount_app");
+    return 0;
+}
+
+void ScreenManager::step() {
+    lv_disp_trig_activity(NULL);
+    lv_task_handler();
+}
+
+virtus\Services\ScreenManager\ScreenManager.h-------------------------------------------------
+#ifndef SCREENMANAGER_H
+#define SCREENMANAGER_H
+
+#include "Drivers/Screen/Screen.h"
+
+typedef enum {
+    OFF, // screen not invoked yet
+    BASIC_BOOT, // showing the logo on first-time boots or resets
+    IDLE, // when there are CPU jobs running but no apps runing
+    HOME, // home screen
+    APP, // showing a particular app - either during first time boot showing the time sync options or later when showing one app.
+} screen_state;
+
+class ScreenManager : public Screen {
+    friend class System;
+    friend class WorkManager;
+public:
+protected:
+    virtual int handle_basic_boot(bool first_time_boot_complete);
+    // virtual int handle_os_init() { return 0; }
+    // virtual int handle_active_loop() { return 0; }
+
+    screen_state state = OFF;
+
+    int mount_app(int id);
+    void step();
+};
+
+extern ScreenManager screen_manager;
+
+#endif
+
+virtus\Services\TimeService\TimeService.h-------------------------------------------------
+#ifndef TIME_H
+#define TIME
+
+#include <SensorPCF8563.hpp>
+
+class TimeService : SensorPCF8563 {
+    
+};
+
+extern TimeService time_service;
+
+#endif
+
+virtus\Services\WorkManager\WorkManager.cpp-------------------------------------------------
+#include "WorkManager.h"
+
+#include "Services/ScreenManager/ScreenManager.h"
+
+int WorkManager::add_app_job(int id, time_t time) {
+    if (!time) {
+        screen_manager.mount_app(id);
+        return 0;
+    }
+    return 0;
+}
+
+virtus\Services\WorkManager\WorkManager.h-------------------------------------------------
+#ifndef WORKMANAGER_H
+#define WORKMANAGER_H
+
+#include "Time.h" // gets access to time_t
+
+typedef void (*JobFunc)();
+
+class WorkManager {
+public:
+    int add_app_job(int id, time_t time = 0);
+    int add_cpu_job(JobFunc func, time_t time = 0); // if persisting through deep sleep, function must be static & global lest it won't work
+
+    int step();
+    bool cpu_jobs_inactive();
+};
+
+extern WorkManager work_manager;
+
+#endif 
+

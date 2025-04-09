@@ -6,16 +6,17 @@
 #include <FFat.h>
 #include <FS.h>
 #include <Wire.h>
-#include <lvgl.h>
-#include <SensorPCF8563.hpp>
 #include <SensorDRV2605.hpp>
 #include <driver/i2s.h>
 #include <driver/temp_sensor.h>
 
 #include "utilities.h"
 
-#include "Drivers/Battery.h"
-#include "Drivers/Screen.h"
+#include "Drivers/Battery/Battery.h"
+#include "Drivers/Screen/Screen.h"
+
+#include "Services/ScreenManager/ScreenManager.h"
+#include "Services/WorkManager/WorkManager.h"
 
 #define LEDC_BACKLIGHT_CHANNEL      3
 #define LEDC_BACKLIGHT_BIT_WIDTH    8
@@ -23,15 +24,13 @@
 
 class System {
 public:
-    System();
-    ~System();
-    void resolve();
+    static void resolve();
 
 private:
-    void basic_boot();
-    void first_time_boot();
-    void os_init();
-    void active_loop();
+    static void basic_boot();
+    static void first_time_boot();
+    static void os_init();
+    static void active_loop();
 };
 
 extern System sys;
