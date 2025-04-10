@@ -123,7 +123,7 @@ void System::resolve() {
 }
 
 void System::basic_boot() {
-
+    es.println("starting...");
     btStop();
     setCpuFrequencyMhz(160);
     Serial.begin(115200);
@@ -135,7 +135,7 @@ void System::basic_boot() {
     screen.handle_basic_boot();
     screen_manager.handle_basic_boot(first_time_boot_complete);
     basic_boot_complete = true;
-
+    es.println("exiting basic boot");
 }
 
 void System::first_time_boot() {
@@ -863,24 +863,30 @@ protected:
 
 #endif
 
-virtus\Services\BTServerManager\BTServerManager.cpp-------------------------------------------------
-#include "BTServerManager.h"
-
+virtus\Services\BTServer\BTServer.cpp-------------------------------------------------
+#include "BTServer.h"
 #include "esp_gatt_common_api.h"
-
 #include "EasySerial.h"
 
-BTServerManager bt_server_manager;
+BTServer bt_server;
 
-BTServer* BTServerManager::create_server(const ServerConfig& config) {
-    BTServer instance;
+int BTServer::start_server(const ServerConfig& config) {
+    if (xSemaphoreTake(lock_handle, 10) != pdTRUE) return -1;
+    
+    if (!config.service_uuid || config.characteristics.empty()) {
+        xSemaphoreGive(lock_handle);
+        return -2;
+    }
+
+    clear_state();
     BLEDevice::init("BTServer");
     esp_ble_gatt_set_local_mtu(100);
 
-    if (!config.service_uuid || config.characteristics.empty()) return nullptr;
-
-    instance.server = BLEDevice::createServer();
-    if (!instance.server) return nullptr;
+    server = BLEDevice::createServer();
+    if (!server) {
+        xSemaphoreGive(lock_handle);
+        return -2;
+    }
 
     class InternalCallbacks : public BLEServerCallbacks {
     public:
@@ -900,21 +906,52 @@ BTServer* BTServerManager::create_server(const ServerConfig& config) {
         void (*_onDisconnect)();
     };
 
-    instance.server->setCallbacks(new InternalCallbacks(config.onConnect, config.onDisconnect));
-    instance.service = instance.server->createService(config.service_uuid);
-    if (!instance.service) return nullptr;
+    server->setCallbacks(new InternalCallbacks(config.onConnect, config.onDisconnect));
+    service = server->createService(config.service_uuid);
+    if (!service) {
+        clear_state();
+        xSemaphoreGive(lock_handle);
+        return -2;
+    }
 
     for (const auto& c : config.characteristics) {
-        if (!c.uuid || !c.flags || strlen(c.uuid) < 4)
-            return nullptr;
+        if (!c.uuid || !c.flags || strlen(c.uuid) < 4) {
+            clear_state();
+            xSemaphoreGive(lock_handle);
+            return -2;
+        }
+
+        es.println("---- Characteristic Setup ----");
+        es.println("UUID  : " + String(c.uuid));
+        es.println("Flags : " + String(c.flags));
 
         uint32_t props = 0;
-        if (strchr(c.flags, 'R')) props |= BLECharacteristic::PROPERTY_READ;
-        if (strchr(c.flags, 'W')) props |= BLECharacteristic::PROPERTY_WRITE;
-        if (strchr(c.flags, 'N')) props |= BLECharacteristic::PROPERTY_NOTIFY;
+        // Check and apply flags
+        if (strchr(c.flags, 'R')) {
+            props |= BLECharacteristic::PROPERTY_READ;
+            es.println(" → Adding PROPERTY_READ");
+        }
+        if (strchr(c.flags, 'W')) {
+            props |= BLECharacteristic::PROPERTY_WRITE;
+            es.println(" → Adding PROPERTY_WRITE");
+        }
+        if (strchr(c.flags, 'N')) {
+            props |= BLECharacteristic::PROPERTY_NOTIFY;
+            es.println(" → Adding PROPERTY_NOTIFY");
+        }
 
-        BLECharacteristic* ch = instance.service->createCharacteristic(c.uuid, props);
-        if (!ch) return nullptr;
+        char buf[32];
+        sprintf(buf, "Final props bitmask: 0x%X", props);
+        es.println(String(buf));
+
+        es.println("-----------------------------");
+
+        BLECharacteristic* ch = service->createCharacteristic(c.uuid, props);
+        if (!ch) {
+            clear_state();
+            xSemaphoreGive(lock_handle);
+            return -2;
+        }
 
         class CharCallbacks : public BLECharacteristicCallbacks {
         public:
@@ -934,45 +971,100 @@ BTServer* BTServerManager::create_server(const ServerConfig& config) {
         };
 
         ch->setCallbacks(new CharCallbacks(c.onWrite, c.onRead));
-        instance.char_map[c.uuid] = ch;
-        instance.notify_flags[c.uuid] = strchr(c.flags, 'N') != nullptr;
+        char_map[c.uuid] = ch;
+        notify_flags[c.uuid] = strchr(c.flags, 'N') != nullptr;
     }
 
-    instance.service->start();
+    service->start();
     BLEAdvertising* adv = BLEDevice::getAdvertising();
     adv->addServiceUUID(config.service_uuid);
     adv->start();
 
-    return new BTServer(std::move(instance)); // optional: use new here to persist
+    return 0;  // Success, lock remains taken
+}
+
+void BTServer::kill_server() {
+    if (xSemaphoreTake(lock_handle, 0) == pdTRUE) {
+        xSemaphoreGive(lock_handle);
+        return;
+    }
+
+    BLEAdvertising* adv = BLEDevice::getAdvertising();
+    if (adv) adv->stop();  // Stop advertising to prevent new connections
+    
+    clear_state();
+    xSemaphoreGive(lock_handle);
+}
+
+void BTServer::clear_state() {
+    if (service) {
+        service->stop();
+        server->removeService(service);
+        service = nullptr;
+    }
+    if (server) {
+        delete server;
+        server = nullptr;
+    }
+    char_map.clear();
+    notify_flags.clear();
 }
 
 // Setters (no notify)
 void BTServer::set(const std::string& uuid, const std::string& value) {
+    if (xSemaphoreTake(lock_handle, 0) == pdTRUE) {
+        xSemaphoreGive(lock_handle);
+        return;
+    }
     if (char_map.count(uuid)) char_map[uuid]->setValue(value);
 }
 
 void BTServer::set(const std::string& uuid, uint16_t value) {
+    if (xSemaphoreTake(lock_handle, 0) == pdTRUE) {
+        xSemaphoreGive(lock_handle);
+        return;
+    }
     if (char_map.count(uuid)) char_map[uuid]->setValue(value);
 }
 
 void BTServer::set(const std::string& uuid, uint32_t value) {
+    if (xSemaphoreTake(lock_handle, 0) == pdTRUE) {
+        xSemaphoreGive(lock_handle);
+        return;
+    }
     if (char_map.count(uuid)) char_map[uuid]->setValue(value);
 }
 
 void BTServer::set(const std::string& uuid, int value) {
+    if (xSemaphoreTake(lock_handle, 0) == pdTRUE) {
+        xSemaphoreGive(lock_handle);
+        return;
+    }
     if (char_map.count(uuid)) char_map[uuid]->setValue(value);
 }
 
 void BTServer::set(const std::string& uuid, float value) {
+    if (xSemaphoreTake(lock_handle, 0) == pdTRUE) {
+        xSemaphoreGive(lock_handle);
+        return;
+    }
     if (char_map.count(uuid)) char_map[uuid]->setValue(value);
 }
 
 void BTServer::set(const std::string& uuid, double value) {
+    if (xSemaphoreTake(lock_handle, 0) == pdTRUE) {
+        xSemaphoreGive(lock_handle);
+        return;
+    }
     if (char_map.count(uuid)) char_map[uuid]->setValue(value);
 }
 
 // Notify (set + notify if allowed)
 void BTServer::notify(const std::string& uuid, const std::string& value) {
+    if (xSemaphoreTake(lock_handle, 0) == pdTRUE) {
+        xSemaphoreGive(lock_handle);
+        return;
+    }
     if (char_map.count(uuid) && notify_flags[uuid]) {
         char_map[uuid]->setValue(value);
         char_map[uuid]->notify();
@@ -980,6 +1072,10 @@ void BTServer::notify(const std::string& uuid, const std::string& value) {
 }
 
 void BTServer::notify(const std::string& uuid, uint16_t value) {
+    if (xSemaphoreTake(lock_handle, 0) == pdTRUE) {
+        xSemaphoreGive(lock_handle);
+        return;
+    }
     if (char_map.count(uuid) && notify_flags[uuid]) {
         char_map[uuid]->setValue(value);
         char_map[uuid]->notify();
@@ -987,6 +1083,10 @@ void BTServer::notify(const std::string& uuid, uint16_t value) {
 }
 
 void BTServer::notify(const std::string& uuid, uint32_t value) {
+    if (xSemaphoreTake(lock_handle, 0) == pdTRUE) {
+        xSemaphoreGive(lock_handle);
+        return;
+    }
     if (char_map.count(uuid) && notify_flags[uuid]) {
         char_map[uuid]->setValue(value);
         char_map[uuid]->notify();
@@ -994,6 +1094,10 @@ void BTServer::notify(const std::string& uuid, uint32_t value) {
 }
 
 void BTServer::notify(const std::string& uuid, int value) {
+    if (xSemaphoreTake(lock_handle, 0) == pdTRUE) {
+        xSemaphoreGive(lock_handle);
+        return;
+    }
     if (char_map.count(uuid) && notify_flags[uuid]) {
         char_map[uuid]->setValue(value);
         char_map[uuid]->notify();
@@ -1001,6 +1105,10 @@ void BTServer::notify(const std::string& uuid, int value) {
 }
 
 void BTServer::notify(const std::string& uuid, float value) {
+    if (xSemaphoreTake(lock_handle, 0) == pdTRUE) {
+        xSemaphoreGive(lock_handle);
+        return;
+    }
     if (char_map.count(uuid) && notify_flags[uuid]) {
         char_map[uuid]->setValue(value);
         char_map[uuid]->notify();
@@ -1008,6 +1116,10 @@ void BTServer::notify(const std::string& uuid, float value) {
 }
 
 void BTServer::notify(const std::string& uuid, double value) {
+    if (xSemaphoreTake(lock_handle, 0) == pdTRUE) {
+        xSemaphoreGive(lock_handle);
+        return;
+    }
     if (char_map.count(uuid) && notify_flags[uuid]) {
         char_map[uuid]->setValue(value);
         char_map[uuid]->notify();
@@ -1015,14 +1127,21 @@ void BTServer::notify(const std::string& uuid, double value) {
 }
 
 bool BTServer::can_notify(const std::string& uuid) {
+    if (xSemaphoreTake(lock_handle, 0) == pdTRUE) {
+        xSemaphoreGive(lock_handle);
+        return false;
+    }
     return notify_flags.count(uuid) && notify_flags[uuid];
 }
 
-// Specialization for String
 template<>
-String BTServer::get<String>(const String& uuid) {
+String BTServer::peek<String>(const String& uuid) {
     String result;
     std::string uuid_str = uuid.c_str();
+    if (xSemaphoreTake(lock_handle, 0) == pdTRUE) {
+        xSemaphoreGive(lock_handle);
+        return result;  // Empty string if server not running
+    }
     if (char_map.count(uuid_str)) {
         BLECharacteristic* ch = char_map[uuid_str];
         size_t len = ch->getLength();
@@ -1034,9 +1153,9 @@ String BTServer::get<String>(const String& uuid) {
     return result;
 }
 
-virtus\Services\BTServerManager\BTServerManager.h-------------------------------------------------
-#ifndef BTSERVERMANAGER_H
-#define BTSERVERMANAGER_H
+virtus\Services\BTServer\BTServer.h-------------------------------------------------
+#ifndef BTSERVER_H
+#define BTSERVER_H
 
 #include <BLEDevice.h>
 #include <BLEUtils.h>
@@ -1045,20 +1164,19 @@ virtus\Services\BTServerManager\BTServerManager.h-------------------------------
 #include <vector>
 #include <string.h>
 #include <string>
-
 #include <WString.h>
-
 #include "Services/BaseService.h"
+#include "EasySerial.h"
+#include "freertos/FreeRTOS.h"      // Add FreeRTOS header
+#include "freertos/semphr.h"        // Add semaphore header
 
-// Config for individual characteristics
 struct CharacteristicConfig {
     const char* uuid;
-    const char* flags; // RWN
+    const char* flags;
     void (*onWrite)();
     void (*onRead)();
 };
 
-// Config for the server
 struct ServerConfig {
     const char* service_uuid;
     std::vector<CharacteristicConfig> characteristics;
@@ -1066,68 +1184,76 @@ struct ServerConfig {
     void (*onDisconnect)();
 };
 
-class BTServer {
+class BTServer : public BaseService {
 public:
-    // Set (no notify)
+    BTServer() : server(nullptr), service(nullptr), lock_handle(nullptr) {
+        lock_handle = xSemaphoreCreateBinary();  // Create semaphore in constructor
+        xSemaphoreGive(lock_handle);            // Initially available
+    }
+    
+    ~BTServer() {
+        if (lock_handle) vSemaphoreDelete(lock_handle);  // Cleanup
+    }
+
+    int start_server(const ServerConfig& config);
+    void kill_server();
     void set(const std::string& uuid, const std::string& value);
     void set(const std::string& uuid, uint16_t value);
     void set(const std::string& uuid, uint32_t value);
     void set(const std::string& uuid, int value);
     void set(const std::string& uuid, float value);
     void set(const std::string& uuid, double value);
-
-    // Notify (only if allowed)
     void notify(const std::string& uuid, const std::string& value);
     void notify(const std::string& uuid, uint16_t value);
     void notify(const std::string& uuid, uint32_t value);
     void notify(const std::string& uuid, int value);
     void notify(const std::string& uuid, float value);
     void notify(const std::string& uuid, double value);
-
-    // Get typed data
-    template<typename T>
-    T get(const String& uuid);
-
+    template<typename T> T peek(const String& uuid);
     bool can_notify(const std::string& uuid);
 
 private:
-    BLEServer* server = nullptr;
-    BLEService* service = nullptr;
+    BLEServer* server;
+    BLEService* service;
     std::map<std::string, BLECharacteristic*> char_map;
     std::map<std::string, bool> notify_flags;
+    SemaphoreHandle_t lock_handle;  // Changed from bool to semaphore handle
 
-    friend class BTServerManager;
+    void clear_state();
 };
 
-class BTServerManager : BaseService {
-    friend class System;
-public:
-    BTServer* create_server(const ServerConfig& config);
-protected:
-    virtual int handle_basic_boot();
-};
+extern BTServer bt_server;
 
-extern BTServerManager bt_server_manager;
-// Template definitions outside the class
 template<typename T>
-T BTServer::get(const String& uuid) {
+T BTServer::peek(const String& uuid) {
     T result{};
+    if (uuid.isEmpty() || !uuid.c_str()) {
+        es.println("Error: Invalid UUID passed to peek");
+        return result;
+    }
     std::string uuid_str = uuid.c_str();
     if (char_map.count(uuid_str)) {
         BLECharacteristic* ch = char_map[uuid_str];
         size_t len = ch->getLength();
         const uint8_t* raw = ch->getData();
-        if (len >= sizeof(T)) {
-            memcpy(&result, raw, sizeof(T));
+        if (len > sizeof(T)) {
+            es.println("Error: Data too long for " + uuid + ", got " + String(len) + ", max " + String(sizeof(T)));
+            return result;
         }
+        if (len > 0) {
+            memcpy(&result, raw, len);
+        } else {
+            es.println("Warning: No data for " + uuid);
+        }
+    } else {
+        es.println("Error: UUID not found: " + uuid);
     }
     return result;
 }
 
+template<> String BTServer::peek<String>(const String& uuid);
 
-
-#endif // BTSERVERMANAGER_H
-
+#endif // BTSERVER_H
 
 virtus\Services\Mailbox\Mailbox.h-------------------------------------------------
 
@@ -1220,42 +1346,57 @@ extern ScreenManager screen_manager;
 
 virtus\Services\TimeService\TimeService.cpp-------------------------------------------------
 #include "TimeService.h"
-#include "Services/BTServerManager/BTServerManager.h"
 #include "EasySerial.h"
 
 TimeService time_service;
-
-BTServer* TimeService::bts = nullptr;
 
 RTC_DATA_ATTR bool time_set_since_cold_boot = false;
 RTC_DATA_ATTR int32_t tz_offset;
 
 int TimeService::handle_first_time_boot() {
     es.println("enteringn handle_first_time_boot");
-    sync_via_bluetooth(10);
+    sync_via_bluetooth(100);
 
-    while (true) {
-        
-    }
-    es.println("exiting handle_first_time_boot");
+    return 0;
 }
 
 int TimeService::sync_via_bluetooth(int timeout = 10) {
     es.println("entering sync via bluetooth");
     ServerConfig config = {
         BT_TIMESERVICE,
-        {{ BT_TIMESERVICE_CHAR_RX, "W", bt_on_write_time}, { BT_TIMESERVICE_REQUEST, "N" }},
+        {{ BT_TIMESERVICE_CHAR_RX, "W", bt_on_write_time, nullptr}, { BT_TIMESERVICE_REQUEST, "N", nullptr, nullptr }},
         bt_on_connect,
         bt_on_disconnect
     };
     es.println("config made");
-    bts = bt_server_manager.create_server(config);
-    es.println("exiting sync_via_bluetooth");
-    return 0;
+    bt_server.start_server(config);
+
+    unsigned long start = millis();
+    const unsigned long timeout_ms = timeout * 1000;
+
+    while (true) {
+        if (millis() - start > timeout_ms || time_set_since_cold_boot) {
+            break;
+        }
+        delay(10);
+    }
+    // es.println("killing server");
+    // bt_server.kill_server();
+
+    if (time_set_since_cold_boot){
+        es.println("sync successful. continuing");
+        return 0;
+    }
+    else{
+        es.println("sync unsuccessful.");
+        return 1;
+    }
 }
 
 void TimeService::bt_on_write_time() {
-    TimePayload payload = bts->get<TimePayload>(BT_TIMESERVICE_CHAR_RX);
+    es.println("written!");
+
+    TimePayload payload = bt_server.peek<TimePayload>(BT_TIMESERVICE_CHAR_RX);
 
     String datetime = String(payload.year) + "-" +
                   (payload.month < 10 ? "0" : "") + String(payload.month) + "-" +
@@ -1273,13 +1414,15 @@ void TimeService::bt_on_write_time() {
 }
 
 void TimeService::bt_on_connect() { 
-    bts->notify(BT_TIMESERVICE_REQUEST, "");
+    bt_server.notify(BT_TIMESERVICE_REQUEST, "");
+    es.println("Connected!");
 }
 
 void TimeService::bt_on_disconnect() { 
+    es.println("Disconnected!");
 }
 
-bool TimeService::is_time_set() {
+bool TimeService::is_time_set() {   
     return time_set_since_cold_boot;
 }
 
@@ -1290,12 +1433,13 @@ virtus\Services\TimeService\TimeService.h---------------------------------------
 #include <SensorPCF8563.hpp>
 
 #include "Services/BaseService.h"
-#include "Services/BTServerManager/BTServerManager.h"
+#include "Services/BTServer/BTServer.h"
 
 #define BT_TIMESERVICE "13371337-0000-4000-8000-133713371337"
 #define BT_TIMESERVICE_CHAR_RX "13371337-0001-4000-8000-133713371337"
 #define BT_TIMESERVICE_REQUEST "13371337-0002-4000-8000-133713371337"
 
+#pragma pack(push, 1)
 struct TimePayload {
     uint16_t year;
     int32_t month;
@@ -1319,9 +1463,6 @@ public:
 
 protected:
     virtual int handle_first_time_boot();
-
-private:    
-    static BTServer* bts;
 
 };
 

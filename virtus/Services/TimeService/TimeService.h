@@ -4,7 +4,7 @@
 #include <SensorPCF8563.hpp>
 
 #include "Services/BaseService.h"
-#include "Services/BTServerManager/BTServerManager.h"
+#include "Services/BTServer/BTServer.h"
 
 #define BT_TIMESERVICE "13371337-0000-4000-8000-133713371337"
 #define BT_TIMESERVICE_CHAR_RX "13371337-0001-4000-8000-133713371337"
@@ -34,9 +34,6 @@ public:
 
 protected:
     virtual int handle_first_time_boot();
-
-private:    
-    static BTServer* bts;
 
 };
 

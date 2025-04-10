@@ -1,5 +1,5 @@
-#ifndef BTSERVERMANAGER_H
-#define BTSERVERMANAGER_H
+#ifndef BTSERVER_H
+#define BTSERVER_H
 
 #include <BLEDevice.h>
 #include <BLEUtils.h>
@@ -8,21 +8,19 @@
 #include <vector>
 #include <string.h>
 #include <string>
-
 #include <WString.h>
-
 #include "Services/BaseService.h"
 #include "EasySerial.h"
+#include "freertos/FreeRTOS.h"      // Add FreeRTOS header
+#include "freertos/semphr.h"        // Add semaphore header
 
-// Config for individual characteristics
 struct CharacteristicConfig {
     const char* uuid;
-    const char* flags; // RWN
+    const char* flags;
     void (*onWrite)();
     void (*onRead)();
 };
 
-// Config for the server
 struct ServerConfig {
     const char* service_uuid;
     std::vector<CharacteristicConfig> characteristics;
@@ -30,62 +28,62 @@ struct ServerConfig {
     void (*onDisconnect)();
 };
 
-class BTServer {
+class BTServer : public BaseService {
 public:
-    // Set (no notify)
+    BTServer() : server(nullptr), service(nullptr), lock_handle(nullptr) {
+        lock_handle = xSemaphoreCreateBinary();  // Create semaphore in constructor
+        xSemaphoreGive(lock_handle);            // Initially available
+    }
+    
+    ~BTServer() {
+        if (lock_handle) vSemaphoreDelete(lock_handle);  // Cleanup
+    }
+
+    int start_server(const ServerConfig& config);
+    void kill_server();
     void set(const std::string& uuid, const std::string& value);
     void set(const std::string& uuid, uint16_t value);
     void set(const std::string& uuid, uint32_t value);
     void set(const std::string& uuid, int value);
     void set(const std::string& uuid, float value);
     void set(const std::string& uuid, double value);
-
-    // Notify (only if allowed)
     void notify(const std::string& uuid, const std::string& value);
     void notify(const std::string& uuid, uint16_t value);
     void notify(const std::string& uuid, uint32_t value);
     void notify(const std::string& uuid, int value);
     void notify(const std::string& uuid, float value);
     void notify(const std::string& uuid, double value);
-
-    // Get typed data
-    template<typename T>
-    T get(const String& uuid);
-
+    template<typename T> T peek(const String& uuid);
     bool can_notify(const std::string& uuid);
 
 private:
-    BLEServer* server = nullptr;
-    BLEService* service = nullptr;
+    BLEServer* server;
+    BLEService* service;
     std::map<std::string, BLECharacteristic*> char_map;
     std::map<std::string, bool> notify_flags;
+    SemaphoreHandle_t lock_handle;  // Changed from bool to semaphore handle
 
-    friend class BTServerManager;
+    void clear_state();
 };
 
-class BTServerManager : BaseService {
-    friend class System;
-public:
-    BTServer* create_server(const ServerConfig& config);
-};
+extern BTServer bt_server;
 
-extern BTServerManager bt_server_manager;
-// Template definitions outside the class
 template<typename T>
-T BTServer::get(const String& uuid) {
-    T result{};  // Zero-initialize for safety
+T BTServer::peek(const String& uuid) {
+    T result{};
+    if (uuid.isEmpty() || !uuid.c_str()) {
+        es.println("Error: Invalid UUID passed to peek");
+        return result;
+    }
     std::string uuid_str = uuid.c_str();
     if (char_map.count(uuid_str)) {
         BLECharacteristic* ch = char_map[uuid_str];
         size_t len = ch->getLength();
         const uint8_t* raw = ch->getData();
-
         if (len > sizeof(T)) {
             es.println("Error: Data too long for " + uuid + ", got " + String(len) + ", max " + String(sizeof(T)));
-            return result;  // Or throw an exception if you prefer
+            return result;
         }
-
-        // Copy whatever we have, up to sizeof(T)
         if (len > 0) {
             memcpy(&result, raw, len);
         } else {
@@ -97,5 +95,6 @@ T BTServer::get(const String& uuid) {
     return result;
 }
 
+template<> String BTServer::peek<String>(const String& uuid);
 
-#endif // BTSERVERMANAGER_H
+#endif // BTSERVER_H
