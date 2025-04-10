@@ -65,9 +65,6 @@ void touchpad_read( lv_indev_drv_t *indev_driver, lv_indev_data_t *data )
     if ( !touched ) {
         data->state = LV_INDEV_STATE_REL;
     } else {
-        es.println("TEST TO SEE IF LVHELPER CAN ACCESS TFT_WIDTH");
-        es.println(TFT_WIDTH);
-        es.println(TFT_HEIGHT);
         switch (screen.getRotation()) {
         case 0:
             data->point.x = TFT_WIDTH - x;
@@ -86,7 +83,7 @@ void touchpad_read( lv_indev_drv_t *indev_driver, lv_indev_data_t *data )
             data->point.x = x;
             data->point.y = y;
         }
-        es.println("Touch detected - X:" + String(data->point.x) + " Y:" + String(data->point.y));
+        // es.println("Touch detected - X:" + String(data->point.x) + " Y:" + String(data->point.y));
         data->state = LV_INDEV_STATE_PR;
     }
 }

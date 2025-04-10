@@ -1,16 +1,5 @@
 #include "System.h"
 
-#include "EasySerial.h"
-EasySerial es;
-
-// Drivers
-Battery battery;
-Screen screen;
-
-// Services
-WorkManager work_manager;
-ScreenManager screen_manager;
-
 // State Flags
 static bool basic_boot_complete;
 RTC_DATA_ATTR bool first_time_boot_complete; // zero-initialized on battery drain or restart
@@ -30,8 +19,7 @@ void System::resolve() {
 }
 
 void System::basic_boot() {
-    es.println("enter basic_boot");
-
+    es.println("starting...");
     btStop();
     setCpuFrequencyMhz(160);
     Serial.begin(115200);
@@ -42,14 +30,15 @@ void System::basic_boot() {
     battery.handle_basic_boot();
     screen.handle_basic_boot();
     screen_manager.handle_basic_boot(first_time_boot_complete);
-
     basic_boot_complete = true;
-
-    es.println("reach end of basic_boot");
+    es.println("exiting basic boot");
 }
 
 void System::first_time_boot() {
     es.println("entering first time boot");
+    
+    time_service.handle_first_time_boot();
+    es.println("done with timeservice handle first time boot");
     work_manager.add_app_job(0); // first-time boot UI
 
     while (true) {        
@@ -57,5 +46,4 @@ void System::first_time_boot() {
         delay(2);
         // purposely blocking forever -- just want to show the UI from hereon out.
     }
-    es.println("exiting first time boot");
 }

@@ -16,7 +16,7 @@ class ScreenManager : public Screen {
     friend class WorkManager;
 public:
 protected:
-    virtual int handle_basic_boot(bool first_time_boot_complete);
+    virtual int handle_basic_boot(bool first_time_boot_coamplete);
     // virtual int handle_os_init() { return 0; }
     // virtual int handle_active_loop() { return 0; }
 

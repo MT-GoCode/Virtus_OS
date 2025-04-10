@@ -1,6 +1,8 @@
 #include "Screen.h"
 #include "Drivers/Screen/LV/LV_Helper.h"
 
+Screen screen;
+
 int Screen::handle_basic_boot() {
 
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5,0,0)

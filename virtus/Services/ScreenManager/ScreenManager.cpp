@@ -6,10 +6,10 @@
 
 #include "EasySerial.h"
 
+ScreenManager screen_manager;
+
 int ScreenManager::handle_basic_boot(bool first_time_boot_complete) {
-    es.println("enter ScreenManager::handle_basic_boot");
     if (!first_time_boot_complete) {
-        es.println("enter ScreenManager::handle_basic_boot's if statement");
 
         state = BASIC_BOOT;
 
@@ -36,14 +36,12 @@ int ScreenManager::handle_basic_boot(bool first_time_boot_complete) {
 }
 
 int ScreenManager::mount_app(int id) {
-    es.println("entering ScreenManager::mount_app");
 
     lv_obj_t* frame = lv_obj_create(lv_scr_act());
     lv_obj_set_size(frame, LV_PCT(100), LV_PCT(100));
     lv_obj_clear_flag(frame, LV_OBJ_FLAG_SCROLLABLE);
 
     app_registry[id]->mount(frame);
-    es.println("exiting ScreenManager::mount_app");
     return 0;
 }
 

@@ -1,5 +1,7 @@
 #include "EasySerial.h"
 
+EasySerial es;
+
 EasySerial::EasySerial(uint32_t baud_rate) : baud_rate_(baud_rate) {
     begin();
 }
