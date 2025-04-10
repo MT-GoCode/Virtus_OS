@@ -31,13 +31,9 @@ void System::basic_boot() {
     screen.handle_basic_boot();
     screen_manager.handle_basic_boot(first_time_boot_complete);
     basic_boot_complete = true;
-    es.println("exiting basic boot");
 }
 
 void System::first_time_boot() {
-    es.println("entering first time boot");
-    
-    time_service.handle_first_time_boot();
     es.println("done with timeservice handle first time boot");
     work_manager.add_app_job(0); // first-time boot UI
 

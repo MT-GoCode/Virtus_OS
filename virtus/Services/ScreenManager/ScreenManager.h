@@ -15,15 +15,21 @@ class ScreenManager : public Screen {
     friend class System;
     friend class WorkManager;
 public:
+
 protected:
     virtual int handle_basic_boot(bool first_time_boot_coamplete);
     // virtual int handle_os_init() { return 0; }
     // virtual int handle_active_loop() { return 0; }
 
-    screen_state state = OFF;
 
     int mount_app(int id);
     void step();
+private:
+    lv_obj_t* time_label;    // Store time label for live updates
+    lv_obj_t* battery_label; // Store battery label for live updates
+    void update_live_state();
+    int current_app = -1;
+    screen_state state = OFF;
 };
 
 extern ScreenManager screen_manager;

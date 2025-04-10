@@ -24,7 +24,9 @@ int BTServer::start_server(const ServerConfig& config) {
 
     class InternalCallbacks : public BLEServerCallbacks {
     public:
-        InternalCallbacks(BLEServer* serverPtr, void (*onC)(), void (*onD)())
+        InternalCallbacks(BLEServer* serverPtr,
+                            std::function<void()> onC,
+                            std::function<void()> onD)
             : _server(serverPtr), _onConnect(onC), _onDisconnect(onD) {}
     
         void onConnect(BLEServer* pServer) override {
@@ -37,10 +39,11 @@ int BTServer::start_server(const ServerConfig& config) {
         }
     
     private:
-        BLEServer* _server;  // Store the server pointer
-        void (*_onConnect)();
-        void (*_onDisconnect)();
+        BLEServer* _server;
+        std::function<void()> _onConnect;
+        std::function<void()> _onDisconnect;
     };
+        
 
     server->setCallbacks(new InternalCallbacks(server, config.onConnect, config.onDisconnect));
     service = server->createService(config.service_uuid);
@@ -91,20 +94,22 @@ int BTServer::start_server(const ServerConfig& config) {
 
         class CharCallbacks : public BLECharacteristicCallbacks {
         public:
-            CharCallbacks(void (*onW)(), void (*onR)()) : _onWrite(onW), _onRead(onR) {}
-
+            CharCallbacks(std::function<void()> onW, std::function<void()> onR)
+                : _onWrite(onW), _onRead(onR) {}
+        
             void onWrite(BLECharacteristic* c) override {
                 if (_onWrite) _onWrite();
             }
-
+        
             void onRead(BLECharacteristic* c) override {
                 if (_onRead) _onRead();
             }
-
+        
         private:
-            void (*_onWrite)();
-            void (*_onRead)();
+            std::function<void()> _onWrite;
+            std::function<void()> _onRead;
         };
+            
 
         ch->setCallbacks(new CharCallbacks(c.onWrite, c.onRead));
         char_map[c.uuid] = ch;

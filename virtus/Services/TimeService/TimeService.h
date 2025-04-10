@@ -2,6 +2,7 @@
 #define TIMESERVICE_H
 
 #include <SensorPCF8563.hpp>
+#include <time.h>
 
 #include "Services/BaseService.h"
 #include "Services/BTServer/BTServer.h"
@@ -28,12 +29,13 @@ public:
     int sync_via_bluetooth(int timeout);
     bool is_time_set();
 
-    static void bt_on_connect();
-    static void bt_on_disconnect();
-    static void bt_on_write_time();
+    void bt_on_connect();
+    void bt_on_disconnect();
+    void bt_on_write_time();
+
+    struct tm get_time(bool adjust_for_timezone = true);
 
 protected:
-    virtual int handle_first_time_boot();
 
 };
 

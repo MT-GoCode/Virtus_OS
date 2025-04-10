@@ -9,6 +9,8 @@ public:
 
     virtual int mount(lv_obj_t* canvas);
     virtual int unmount(lv_obj_t* canvas);
+
+    virtual void update_live_state() {};
 };
 
 #endif

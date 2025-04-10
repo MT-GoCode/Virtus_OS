@@ -1,10 +1,16 @@
-#include "Apps/System/FirstTimeBootMenu/FirstTimeBootMenu.h"
+#include "Apps/System/BIOS/BIOS.h"
+#include "Services/WorkManager/WorkManager.h"
+#include "Services/TimeService/TimeService.h"
 
 #include <lvgl.h>
 
-int FirstTimeBootMenu::mount(lv_obj_t* canvas) {
-    lv_obj_set_size(canvas, LV_HOR_RES, LV_VER_RES);
-    lv_obj_center(canvas);
+int BIOS::mount(lv_obj_t* canvas) {
+    work_manager.add_cpu_job([&]() {
+        time_service.sync_via_bluetooth(10);
+    });
+
+    // lv_obj_set_size(canvas, LV_HOR_RES, LV_VER_RES);
+    // lv_obj_center(canvas);
     lv_obj_set_flex_flow(canvas, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(canvas, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_gap(canvas, 12, 0);
@@ -48,7 +54,7 @@ int FirstTimeBootMenu::mount(lv_obj_t* canvas) {
     return 0;
 }
 
-int FirstTimeBootMenu::unmount(lv_obj_t* canvas) {
+int BIOS::unmount(lv_obj_t* canvas) {
     lv_obj_clean(canvas);
     return 0;
 }

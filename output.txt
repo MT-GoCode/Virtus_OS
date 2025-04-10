@@ -135,13 +135,12 @@ void System::basic_boot() {
     screen.handle_basic_boot();
     screen_manager.handle_basic_boot(first_time_boot_complete);
     basic_boot_complete = true;
-    es.println("exiting basic boot");
 }
 
 void System::first_time_boot() {
-    es.println("entering first time boot");
-    
-    time_service.handle_first_time_boot();
+    work_manager.add_cpu_job([&]() {
+        time_service.handle_first_time_boot();
+    });
     es.println("done with timeservice handle first time boot");
     work_manager.add_app_job(0); // first-time boot UI
 
@@ -251,9 +250,9 @@ virtus\Apps\AppRegistry.h-------------------------------------------------
 #define APPREGISTRY_H
 
 #include "Apps/BaseApp.h"
-#include "Apps/System/FirstTimeBootMenu/FirstTimeBootMenu.h"
+#include "Apps/System/BIOS/BIOS.h"
 
-inline FirstTimeBootMenu first_time_boot_menu;
+inline BIOS first_time_boot_menu;
 
 inline BaseApp* app_registry[] = {
     &first_time_boot_menu,
@@ -277,12 +276,12 @@ public:
 
 #endif
 
-virtus\Apps\System\FirstTimeBootMenu\FirstTimeBootMenu.cpp-------------------------------------------------
-#include "Apps/System/FirstTimeBootMenu/FirstTimeBootMenu.h"
+virtus\Apps\System\BIOS\BIOS.cpp-------------------------------------------------
+#include "Apps/System/BIOS/BIOS.h"
 
 #include <lvgl.h>
 
-int FirstTimeBootMenu::mount(lv_obj_t* canvas) {
+int BIOS::mount(lv_obj_t* canvas) {
     lv_obj_set_size(canvas, LV_HOR_RES, LV_VER_RES);
     lv_obj_center(canvas);
     lv_obj_set_flex_flow(canvas, LV_FLEX_FLOW_COLUMN);
@@ -328,26 +327,26 @@ int FirstTimeBootMenu::mount(lv_obj_t* canvas) {
     return 0;
 }
 
-int FirstTimeBootMenu::unmount(lv_obj_t* canvas) {
+int BIOS::unmount(lv_obj_t* canvas) {
     lv_obj_clean(canvas);
     return 0;
 }
 
 
 
-virtus\Apps\System\FirstTimeBootMenu\FirstTimeBootMenu.h-------------------------------------------------
-#ifndef FIRSTTIMEBOOTMENU_H
-#define FIRSTTIMEBOOTMENU_H
+virtus\Apps\System\BIOS\BIOS.h-------------------------------------------------
+#ifndef BIOS_H
+#define BIOS_H
 
 #include "Apps/BaseApp.h"
 
-class FirstTimeBootMenu : public BaseApp {
+class BIOS : public BaseApp {
 public:
     virtual int mount(lv_obj_t* canvas);
     virtual int unmount(lv_obj_t* canvas);
 };
 
-extern FirstTimeBootMenu first_time_boot_menu;
+extern BIOS first_time_boot_menu;
 
 #endif
 
@@ -890,23 +889,28 @@ int BTServer::start_server(const ServerConfig& config) {
 
     class InternalCallbacks : public BLEServerCallbacks {
     public:
-        InternalCallbacks(void (*onC)(), void (*onD)())
-            : _onConnect(onC), _onDisconnect(onD) {}
-
+        InternalCallbacks(BLEServer* serverPtr,
+                            std::function<void()> onC,
+                            std::function<void()> onD)
+            : _server(serverPtr), _onConnect(onC), _onDisconnect(onD) {}
+    
         void onConnect(BLEServer* pServer) override {
+            es.println("Connected! MTU: " + String(_server->getPeerMTU(_server->getConnId())));
             if (_onConnect) _onConnect();
         }
-
+    
         void onDisconnect(BLEServer* pServer) override {
             if (_onDisconnect) _onDisconnect();
         }
-
+    
     private:
-        void (*_onConnect)();
-        void (*_onDisconnect)();
+        BLEServer* _server;
+        std::function<void()> _onConnect;
+        std::function<void()> _onDisconnect;
     };
+        
 
-    server->setCallbacks(new InternalCallbacks(config.onConnect, config.onDisconnect));
+    server->setCallbacks(new InternalCallbacks(server, config.onConnect, config.onDisconnect));
     service = server->createService(config.service_uuid);
     if (!service) {
         clear_state();
@@ -955,20 +959,22 @@ int BTServer::start_server(const ServerConfig& config) {
 
         class CharCallbacks : public BLECharacteristicCallbacks {
         public:
-            CharCallbacks(void (*onW)(), void (*onR)()) : _onWrite(onW), _onRead(onR) {}
-
+            CharCallbacks(std::function<void()> onW, std::function<void()> onR)
+                : _onWrite(onW), _onRead(onR) {}
+        
             void onWrite(BLECharacteristic* c) override {
                 if (_onWrite) _onWrite();
             }
-
+        
             void onRead(BLECharacteristic* c) override {
                 if (_onRead) _onRead();
             }
-
+        
         private:
-            void (*_onWrite)();
-            void (*_onRead)();
+            std::function<void()> _onWrite;
+            std::function<void()> _onRead;
         };
+            
 
         ch->setCallbacks(new CharCallbacks(c.onWrite, c.onRead));
         char_map[c.uuid] = ch;
@@ -1169,19 +1175,20 @@ virtus\Services\BTServer\BTServer.h---------------------------------------------
 #include "EasySerial.h"
 #include "freertos/FreeRTOS.h"      // Add FreeRTOS header
 #include "freertos/semphr.h"        // Add semaphore header
+#include <functional>
 
 struct CharacteristicConfig {
     const char* uuid;
     const char* flags;
-    void (*onWrite)();
-    void (*onRead)();
+    std::function<void()> onWrite;
+    std::function<void()> onRead;
 };
 
 struct ServerConfig {
     const char* service_uuid;
     std::vector<CharacteristicConfig> characteristics;
-    void (*onConnect)();
-    void (*onDisconnect)();
+    std::function<void()> onConnect;
+    std::function<void()> onDisconnect;
 };
 
 class BTServer : public BaseService {
@@ -1356,7 +1363,6 @@ RTC_DATA_ATTR int32_t tz_offset;
 int TimeService::handle_first_time_boot() {
     es.println("enteringn handle_first_time_boot");
     sync_via_bluetooth(100);
-
     return 0;
 }
 
@@ -1364,9 +1370,9 @@ int TimeService::sync_via_bluetooth(int timeout = 10) {
     es.println("entering sync via bluetooth");
     ServerConfig config = {
         BT_TIMESERVICE,
-        {{ BT_TIMESERVICE_CHAR_RX, "W", bt_on_write_time, nullptr}, { BT_TIMESERVICE_REQUEST, "N", nullptr, nullptr }},
-        bt_on_connect,
-        bt_on_disconnect
+        {{ BT_TIMESERVICE_CHAR_RX, "W", [&]() { time_service.bt_on_write_time(); }, nullptr}, { BT_TIMESERVICE_REQUEST, "N", nullptr, nullptr }},
+        [&]() { time_service.bt_on_connect(); },
+        [&]() { time_service.bt_on_disconnect(); }
     };
     es.println("config made");
     bt_server.start_server(config);
@@ -1380,8 +1386,8 @@ int TimeService::sync_via_bluetooth(int timeout = 10) {
         }
         delay(10);
     }
-    // es.println("killing server");
-    // bt_server.kill_server();
+    es.println("killing server");
+    bt_server.kill_server();
 
     if (time_set_since_cold_boot){
         es.println("sync successful. continuing");
@@ -1409,13 +1415,15 @@ void TimeService::bt_on_write_time() {
     time_service.setDateTime(payload.year, payload.month, payload.day, payload.hour, payload.minute, payload.second);
 
     tz_offset = payload.tz_offset;
+
+    es.println(payload.tz_offset);
         
     time_set_since_cold_boot = true;
 }
 
 void TimeService::bt_on_connect() { 
-    bt_server.notify(BT_TIMESERVICE_REQUEST, "");
-    es.println("Connected!");
+    es.println("COnnected");
+
 }
 
 void TimeService::bt_on_disconnect() { 
@@ -1457,9 +1465,9 @@ public:
     int sync_via_bluetooth(int timeout);
     bool is_time_set();
 
-    static void bt_on_connect();
-    static void bt_on_disconnect();
-    static void bt_on_write_time();
+    void bt_on_connect();
+    void bt_on_disconnect();
+    void bt_on_write_time();
 
 protected:
     virtual int handle_first_time_boot();
@@ -1472,7 +1480,6 @@ extern TimeService time_service;
 
 virtus\Services\WorkManager\WorkManager.cpp-------------------------------------------------
 #include "WorkManager.h"
-
 #include "Services/ScreenManager/ScreenManager.h"
 
 WorkManager work_manager;
@@ -1482,27 +1489,99 @@ int WorkManager::add_app_job(int id, time_t time) {
         screen_manager.mount_app(id);
         return 0;
     }
+    // TODO: Delayed app job scheduling
     return 0;
 }
+
+void WorkManager::add_job(TaskHandle_t handle) {
+    xSemaphoreTake(job_set_mutex, portMAX_DELAY);
+    job_set.insert(handle);
+    xSemaphoreGive(job_set_mutex);
+}
+
+void WorkManager::remove_job(TaskHandle_t handle) {
+    xSemaphoreTake(job_set_mutex, portMAX_DELAY);
+    job_set.erase(handle);
+    xSemaphoreGive(job_set_mutex);
+}
+
+void WorkManager::job_wrapper(void* param) {
+    auto* tuple = static_cast<std::tuple<WorkManager*, JobFunc>*>(param);
+    WorkManager* self = std::get<0>(*tuple);
+    JobFunc func = std::get<1>(*tuple);
+
+    TaskHandle_t handle = xTaskGetCurrentTaskHandle();
+    self->add_job(handle);
+
+    func();
+
+    self->remove_job(handle);
+    delete tuple;
+    vTaskDelete(nullptr);
+}
+
+
+int WorkManager::add_cpu_job(JobFunc func, time_t time) {
+    if (!func) return -1;
+
+    if (time == 0) {
+        auto* data = new std::tuple<WorkManager*, JobFunc>(this, func);
+        BaseType_t result = xTaskCreate(
+            job_wrapper,
+            "cpu_job",
+            4096, // Stack size
+            data,
+            1,    // Priority
+            nullptr
+        );
+        return (result == pdPASS) ? 0 : -2;
+    }
+
+    // TODO: support delayed jobs
+    return -1;
+}
+
+bool WorkManager::cpu_jobs_inactive() {
+    xSemaphoreTake(job_set_mutex, portMAX_DELAY);
+    bool inactive = job_set.empty();
+    xSemaphoreGive(job_set_mutex);
+    return inactive;
+}
+
 
 virtus\Services\WorkManager\WorkManager.h-------------------------------------------------
 #ifndef WORKMANAGER_H
 #define WORKMANAGER_H
 
-#include "Time.h" // gets access to time_t
+#include <functional>
+#include <unordered_set>
+#include "Time.h" // for time_t
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 
-typedef void (*JobFunc)();
+typedef std::function<void()> JobFunc;
 
 class WorkManager {
 public:
     int add_app_job(int id, time_t time = 0);
-    int add_cpu_job(JobFunc func, time_t time = 0); // if persisting through deep sleep, function must be static & global lest it won't work
+    int add_cpu_job(JobFunc func, time_t time = 0);
 
     int step();
     bool cpu_jobs_inactive();
+
+private:
+    std::unordered_set<TaskHandle_t> job_set;
+    SemaphoreHandle_t job_set_mutex = xSemaphoreCreateMutex();
+
+    void add_job(TaskHandle_t handle);
+    void remove_job(TaskHandle_t handle);
+    static void job_wrapper(void* param);
+
 };
 
 extern WorkManager work_manager;
 
-#endif 
+#endif // WORKMANAGER_H
+
 

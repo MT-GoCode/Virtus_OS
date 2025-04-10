@@ -13,19 +13,20 @@
 #include "EasySerial.h"
 #include "freertos/FreeRTOS.h"      // Add FreeRTOS header
 #include "freertos/semphr.h"        // Add semaphore header
+#include <functional>
 
 struct CharacteristicConfig {
     const char* uuid;
     const char* flags;
-    void (*onWrite)();
-    void (*onRead)();
+    std::function<void()> onWrite;
+    std::function<void()> onRead;
 };
 
 struct ServerConfig {
     const char* service_uuid;
     std::vector<CharacteristicConfig> characteristics;
-    void (*onConnect)();
-    void (*onDisconnect)();
+    std::function<void()> onConnect;
+    std::function<void()> onDisconnect;
 };
 
 class BTServer : public BaseService {
