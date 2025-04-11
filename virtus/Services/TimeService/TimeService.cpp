@@ -6,11 +6,11 @@ TimeService time_service;
 RTC_DATA_ATTR bool time_set_since_cold_boot = false;
 RTC_DATA_ATTR int32_t tz_offset;
 
-int TimeService::sync_via_bluetooth(int timeout = 10) {
+void TimeService::sync_via_bluetooth(int timeout, Mailbox<int>* mail_time_service) {
     es.println("entering sync via bluetooth");
     ServerConfig config = {
         BT_TIMESERVICE,
-        {{ BT_TIMESERVICE_CHAR_RX, "W", [&]() { time_service.bt_on_write_time(); }, nullptr}, { BT_TIMESERVICE_REQUEST, "N", nullptr, nullptr }},
+        {{ BT_TIMESERVICE_CHAR_RX, "W", [&]() { time_service.bt_on_write_time(); }, nullptr}},
         [&]() { time_service.bt_on_connect(); },
         [&]() { time_service.bt_on_disconnect(); }
     };
@@ -31,11 +31,11 @@ int TimeService::sync_via_bluetooth(int timeout = 10) {
 
     if (time_set_since_cold_boot){
         es.println("sync successful. continuing");
-        return 0;
+        mail_time_service->write(0);
     }
     else{
         es.println("sync unsuccessful.");
-        return 1;
+        mail_time_service->write(1);
     }
 }
 

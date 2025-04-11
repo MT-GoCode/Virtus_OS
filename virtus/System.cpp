@@ -3,17 +3,25 @@
 // State Flags
 static bool basic_boot_complete;
 RTC_DATA_ATTR bool first_time_boot_complete; // zero-initialized on battery drain or restart
+static bool force_complete_first_time_boot;
 static bool os_init_complete;
 static bool inactive;
 
+
 void System::resolve() {
+    es.println("entered resolve");
     while (true) {
         if (!basic_boot_complete) {
             basic_boot();
-        } else if (!first_time_boot_complete) {
+        } else if (!first_time_boot_complete && !force_complete_first_time_boot) {
+            es.println("beginning first_time_boot stage");
             first_time_boot();
+        } else if (!os_init_complete) {
+            es.println("beginning os_init stage");
+            os_init();
         } else {
-            break;
+            es.println("beginning active-Loop stage");
+            active_loop();
         }
     }
 }
@@ -34,12 +42,41 @@ void System::basic_boot() {
 }
 
 void System::first_time_boot() {
-    es.println("done with timeservice handle first time boot");
+    bios_mailbox = new Mailbox<int>();
+    bios.setup_system_comm(bios_mailbox);
     work_manager.add_app_job(0); // first-time boot UI
 
     while (true) {        
         screen_manager.step();
         delay(2);
-        // purposely blocking forever -- just want to show the UI from hereon out.
+        
+        int bios_result = -1;
+        if (bios_mailbox->read(bios_result, 0)) {
+            es.println("READ bios result!");
+            es.println(bios_result);
+            if (bios_result == 0) {
+                first_time_boot_complete = true;
+                break;
+            }
+            else if (bios_result == 1) {
+                force_complete_first_time_boot = true;
+                break;
+            } 
+        }
+    }
+
+    delete bios_mailbox;
+
+}
+
+void System::os_init() {
+    os_init_complete = true;
+}
+
+void System::active_loop() {
+    work_manager.add_app_job(1); // watch face
+    while (true) {        
+        screen_manager.step();
+        delay(2);
     }
 }

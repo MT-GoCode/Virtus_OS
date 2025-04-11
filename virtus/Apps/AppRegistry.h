@@ -3,11 +3,10 @@
 
 #include "Apps/BaseApp.h"
 #include "Apps/System/BIOS/BIOS.h"
-
-inline BIOS first_time_boot_menu;
+#include "Apps/System/DefaultWatchFace/DefaultWatchFace.h"
 
 inline BaseApp* app_registry[] = {
-    &first_time_boot_menu,
+    &bios, &default_watch_face
 };
 
 #endif

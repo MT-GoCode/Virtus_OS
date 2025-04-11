@@ -6,10 +6,10 @@
 
 #include "Services/BaseService.h"
 #include "Services/BTServer/BTServer.h"
+#include "Services/Mailbox/Mailbox.h"
 
 #define BT_TIMESERVICE "13371337-0000-4000-8000-133713371337"
 #define BT_TIMESERVICE_CHAR_RX "13371337-0001-4000-8000-133713371337"
-#define BT_TIMESERVICE_REQUEST "13371337-0002-4000-8000-133713371337"
 
 #pragma pack(push, 1)
 struct TimePayload {
@@ -26,7 +26,7 @@ class TimeService : BaseService, public SensorPCF8563 {
     friend class System;
 public:
 
-    int sync_via_bluetooth(int timeout);
+    void sync_via_bluetooth(int timeout, Mailbox<int>* mail_time_service);
     bool is_time_set();
 
     void bt_on_connect();

@@ -19,6 +19,9 @@
 #include "Services/ScreenManager/ScreenManager.h"
 #include "Services/WorkManager/WorkManager.h"
 #include "Services/TimeService/TimeService.h"
+#include "Services/Mailbox/Mailbox.h"
+
+#include "Apps/System/BIOS/BIOS.h"
 
 
 #define LEDC_BACKLIGHT_CHANNEL      3
@@ -27,13 +30,15 @@
 
 class System {
 public:
-    static void resolve();
+    void resolve();
 
 private:
-    static void basic_boot();
-    static void first_time_boot();
-    static void os_init();
-    static void active_loop();
+    void basic_boot();
+    void first_time_boot();
+    void os_init();
+    void active_loop();
+
+    Mailbox<int>* bios_mailbox;
 };
 
 extern System sys;
