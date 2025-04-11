@@ -113,14 +113,18 @@ static bool inactive;
 
 
 void System::resolve() {
+    es.println("entered resolve");
     while (true) {
         if (!basic_boot_complete) {
             basic_boot();
         } else if (!first_time_boot_complete && !force_complete_first_time_boot) {
+            es.println("beginning first_time_boot stage");
             first_time_boot();
-        } else if (first_time_boot_complete || force_complete_first_time_boot) {
+        } else if (!os_init_complete) {
+            es.println("beginning os_init stage");
             os_init();
-        } else if (os_init_complete) {
+        } else {
+            es.println("beginning active-Loop stage");
             active_loop();
         }
     }
@@ -305,7 +309,7 @@ public:
     virtual ~BaseApp() {};
 
     virtual int mount(lv_obj_t* canvas);
-    virtual int unmount(lv_obj_t* canvas);
+    virtual int unmount();
 
     virtual void update_live_state() {};
 };
@@ -329,47 +333,37 @@ void BIOS::setup_system_comm(Mailbox<int>* mailbox){
 
 void BIOS::ble_button_clicked(lv_event_t * e)
 {
-    lv_event_code_t event_code = lv_event_get_code(e);
-
-    if(event_code == LV_EVENT_CLICKED) {
-        bios.screen_state.selection = "BLE";
-    }
+    bios.screen_state.selection = "BLE";
     bios.state_changed = true;
 }
 
 void BIOS::manual_button_clicked(lv_event_t * e)
 {
-    lv_event_code_t event_code = lv_event_get_code(e);
-
-    if(event_code == LV_EVENT_CLICKED) {
-        bios.screen_state.selection = "Manual";
-    }
+    bios.screen_state.selection = "Manual";
     bios.state_changed = true;
 }
 
 
 void BIOS::ble_try_again_button_clicked(lv_event_t * e)
 {
-    lv_event_code_t event_code = lv_event_get_code(e);
-
-    if(event_code == LV_EVENT_CLICKED) {
-        work_manager.add_cpu_job([&]() {
-            time_service.sync_via_bluetooth(30, bios.mail_time_service);
-        });
-        bios.screen_state.ble_busy = true;
-    }
+    work_manager.add_cpu_job([&]() {
+        time_service.sync_via_bluetooth(30, bios.mail_time_service);
+    });
+    bios.screen_state.ble_busy = true;
     bios.state_changed = true;
 }
 
 void BIOS::continue_button_clicked(lv_event_t * e)
 {
+    lv_event_code_t event_code = lv_event_get_code(e);
     if (bios.screen_state.error) {
+        es.println("writing 1 to system mailbox in continue");
         system_mailbox->write(1);
     }
     else {
+        es.println("writing 0 to system mailbox in continue");
         system_mailbox->write(0);
-    }
-    
+    }    
 }
 
 int BIOS::mount(lv_obj_t* canvas) {
@@ -606,10 +600,10 @@ int BIOS::mount(lv_obj_t* canvas) {
 
 
 
-    lv_obj_add_event_cb(form_button_ble_button, ble_button_clicked, LV_EVENT_ALL, NULL);
-    lv_obj_add_event_cb(form_button_manual_button, manual_button_clicked, LV_EVENT_ALL, NULL);
-    lv_obj_add_event_cb(try_again_button_button, ble_try_again_button_clicked, LV_EVENT_ALL, NULL);
-    lv_obj_add_event_cb(continue_button_button, continue_button_clicked, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(form_button_ble_button, ble_button_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(form_button_manual_button, manual_button_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(try_again_button_button, ble_try_again_button_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(continue_button_button, continue_button_clicked, LV_EVENT_CLICKED, NULL);
 
     return 0;
 }
@@ -621,7 +615,7 @@ void BIOS::update_live_state() {
         es.println("READ!");
         es.println(x);
         if (x == 0 && screen_state.splash) {
-            es.println("read successful time sync!");
+            es.println("read successful time sync! now writing to system mailbox");
             system_mailbox->write(0);
         }
         else if (x == 1 && screen_state.splash) {
@@ -702,9 +696,8 @@ void BIOS::update_live_state() {
     }
 }
 
-int BIOS::unmount(lv_obj_t* canvas) {
+int BIOS::unmount() {
     delete mail_time_service;
-    lv_obj_clean(canvas);
     return 0;
 }
 
@@ -718,7 +711,7 @@ virtus\Apps\System\BIOS\BIOS.h-------------------------------------------------
 class BIOS : public BaseApp {
 public:
     virtual int mount(lv_obj_t* canvas);
-    virtual int unmount(lv_obj_t* canvas);
+    virtual int unmount();
     virtual void update_live_state();
 
     void setup_system_comm(Mailbox<int>* mailbox);
@@ -790,9 +783,8 @@ int DefaultWatchFace::mount(lv_obj_t* canvas) {
     lv_obj_remove_style_all(frame);
     lv_obj_set_width(frame, lv_pct(100));
     lv_obj_set_height(frame, lv_pct(100));
-    lv_obj_set_x(frame, 0);
-    lv_obj_set_y(frame, -1);
-    lv_obj_set_align(frame, LV_ALIGN_CENTER);
+    lv_obj_set_pos(frame, 0, 0);
+    lv_obj_set_align(frame, LV_ALIGN_TOP_LEFT);
     lv_obj_clear_flag(frame, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_ELASTIC |
                       LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_CHAIN);     /// Flags
     lv_obj_set_style_bg_color(frame, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -855,16 +847,18 @@ int DefaultWatchFace::mount(lv_obj_t* canvas) {
     lv_obj_set_style_text_color(date_label, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(date_label, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(date_label, &lv_font_montserrat_20, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    return 0;
 }
 
 void DefaultWatchFace::update_live_state() {
     struct tm time_info = time_service.get_time(true);
 
-    // Format HH:MM (24-hour or 12-hour format)
-    char hhmm[6];
+    // Format HH:MM (12-hour format, no zero padding)
+    char hhmm[12];
     int display_hour = time_info.tm_hour % 12;
     if (display_hour == 0) display_hour = 12;  // handle midnight/noon
-    snprintf(hhmm, sizeof(hhmm), "%02d:%02d", display_hour, time_info.tm_min);
+    snprintf(hhmm, sizeof(hhmm), "%d:%d", display_hour, time_info.tm_min);
     lv_label_set_text(hh_mm_label, hhmm);
 
     // Set AM/PM
@@ -874,14 +868,13 @@ void DefaultWatchFace::update_live_state() {
     const char* day_names[] = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
     lv_label_set_text(day_label, day_names[time_info.tm_wday]);
 
-    // Format and set date (e.g., 11.04.25)
-    char date[11];
-    snprintf(date, sizeof(date), "%02d.%02d.%02d", time_info.tm_mday, time_info.tm_mon + 1, (time_info.tm_year + 1900) % 100);
+    // Format and set date (e.g., 4.11.25) as month.day.year (no padding)
+    char date[16];
+    snprintf(date, sizeof(date), "%d.%d.%d", time_info.tm_mon + 1, time_info.tm_mday, (time_info.tm_year + 1900) % 100);
     lv_label_set_text(date_label, date);
 }
 
-int DefaultWatchFace::unmount(lv_obj_t* canvas) {
-    lv_obj_clean(canvas);
+int DefaultWatchFace::unmount() {
     return 0;
 }
 
@@ -894,7 +887,7 @@ virtus\Apps\System\DefaultWatchFace\DefaultWatchFace.h--------------------------
 class DefaultWatchFace : public BaseApp {
 public:
     virtual int mount(lv_obj_t* canvas);
-    virtual int unmount(lv_obj_t* canvas);
+    virtual int unmount();
     virtual void update_live_state();
 
 private:
@@ -1556,6 +1549,10 @@ void BTServer::kill_server() {
         return;
     }
 
+    if (server && server->getConnectedCount() > 0) {
+        server->disconnect(0);  // Disconnect first connected client (handle 0)
+    }
+
     BLEAdvertising* adv = BLEDevice::getAdvertising();
     if (adv) adv->stop();  // Stop advertising to prevent new connections
     
@@ -1841,6 +1838,8 @@ private:
 public:
     Mailbox() {
         queue = xQueueCreate(default_depth, sizeof(T));
+        T dummy;
+        while (xQueueReceive(queue, &dummy, 0) == pdTRUE) {} // Drain queue
     }
 
     ~Mailbox() {
@@ -1910,6 +1909,14 @@ int ScreenManager::handle_basic_boot(bool first_time_boot_complete) {
 int ScreenManager::mount_app(int id) {
     state = APP;
 
+    es.println("screen manager asked to mount ");
+
+    if (current_app != -1) {
+        app_registry[current_app]->unmount();
+    }
+
+    es.println(id);
+
     full_screen = lv_obj_create(NULL);
     lv_obj_clear_flag(full_screen, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
 
@@ -1945,12 +1952,14 @@ int ScreenManager::mount_app(int id) {
     lv_obj_set_height(time_label, LV_SIZE_CONTENT);    /// 1
     lv_obj_set_align(time_label, LV_ALIGN_LEFT_MID);
     lv_obj_set_style_text_color(time_label, lv_color_white(), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(time_label, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);  // Set larger font
 
     battery_label = lv_label_create(top_bar);
     lv_obj_set_width(battery_label, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(battery_label, LV_SIZE_CONTENT);    /// 1
     lv_obj_set_align(battery_label, LV_ALIGN_RIGHT_MID);
     lv_obj_set_style_text_color(battery_label, lv_color_white(), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(battery_label, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);  // Set larger font
 
     app_frame = lv_obj_create(tob_bar_container);
     lv_obj_remove_style_all(app_frame);
@@ -2056,7 +2065,7 @@ void TimeService::sync_via_bluetooth(int timeout, Mailbox<int>* mail_time_servic
     es.println("entering sync via bluetooth");
     ServerConfig config = {
         BT_TIMESERVICE,
-        {{ BT_TIMESERVICE_CHAR_RX, "W", [&]() { time_service.bt_on_write_time(); }, nullptr}, { BT_TIMESERVICE_REQUEST, "N", nullptr, nullptr }},
+        {{ BT_TIMESERVICE_CHAR_RX, "W", [&]() { time_service.bt_on_write_time(); }, nullptr}},
         [&]() { time_service.bt_on_connect(); },
         [&]() { time_service.bt_on_disconnect(); }
     };
@@ -2159,7 +2168,6 @@ virtus\Services\TimeService\TimeService.h---------------------------------------
 
 #define BT_TIMESERVICE "13371337-0000-4000-8000-133713371337"
 #define BT_TIMESERVICE_CHAR_RX "13371337-0001-4000-8000-133713371337"
-#define BT_TIMESERVICE_REQUEST "13371337-0002-4000-8000-133713371337"
 
 #pragma pack(push, 1)
 struct TimePayload {
@@ -2200,6 +2208,7 @@ virtus\Services\WorkManager\WorkManager.cpp-------------------------------------
 WorkManager work_manager;
 
 int WorkManager::add_app_job(int id, time_t time) {
+
     if (!time) {
         screen_manager.mount_app(id);
         return 0;

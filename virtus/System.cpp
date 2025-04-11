@@ -42,6 +42,7 @@ void System::basic_boot() {
 }
 
 void System::first_time_boot() {
+    
     bios_mailbox = new Mailbox<int>();
     bios.setup_system_comm(bios_mailbox);
     work_manager.add_app_job(0); // first-time boot UI

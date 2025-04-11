@@ -86,7 +86,7 @@ void DefaultWatchFace::update_live_state() {
     char hhmm[12];
     int display_hour = time_info.tm_hour % 12;
     if (display_hour == 0) display_hour = 12;  // handle midnight/noon
-    snprintf(hhmm, sizeof(hhmm), "%d:%d", display_hour, time_info.tm_min);
+    snprintf(hhmm, sizeof(hhmm), "%d:%02d", display_hour, time_info.tm_min);
     lv_label_set_text(hh_mm_label, hhmm);
 
     // Set AM/PM

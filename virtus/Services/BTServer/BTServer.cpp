@@ -130,6 +130,10 @@ void BTServer::kill_server() {
         return;
     }
 
+    if (server && server->getConnectedCount() > 0) {
+        server->disconnect(0);  // Disconnect first connected client (handle 0)
+    }
+
     BLEAdvertising* adv = BLEDevice::getAdvertising();
     if (adv) adv->stop();  // Stop advertising to prevent new connections
     

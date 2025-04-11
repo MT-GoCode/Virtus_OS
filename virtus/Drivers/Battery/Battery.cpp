@@ -90,7 +90,7 @@ int Battery::handle_basic_boot() {
     setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
 
     // Set the button power-on press time
-    setPowerKeyPressOnTime(XPOWERS_POWERON_128MS);
+    setPowerKeyPressOnTime(XPOWERS_POWERON_512MS);
 
 
     // It is necessary to disable the detection function of the TS pin on the board
@@ -144,6 +144,16 @@ int Battery::handle_basic_boot() {
     setButtonBatteryChargeVoltage(3300);
 
     enableButtonBatteryCharge();
+
+    disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
+
+    enableIRQ(
+        // XPOWERS_AXP2101_BAT_INSERT_IRQ    | XPOWERS_AXP2101_BAT_REMOVE_IRQ      |   //BATTERY
+        XPOWERS_AXP2101_VBUS_INSERT_IRQ   | XPOWERS_AXP2101_VBUS_REMOVE_IRQ     |   //VBUS
+        XPOWERS_AXP2101_PKEY_SHORT_IRQ    | XPOWERS_AXP2101_PKEY_LONG_IRQ       |  //POWER KEY
+        XPOWERS_AXP2101_BAT_CHG_DONE_IRQ  | XPOWERS_AXP2101_BAT_CHG_START_IRQ       //CHARGE
+        // XPOWERS_AXP2101_PKEY_NEGATIVE_IRQ | XPOWERS_AXP2101_PKEY_POSITIVE_IRQ   |   //POWER KEY
+    );
 
     return 0;
 }

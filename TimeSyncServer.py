@@ -42,7 +42,7 @@ async def run():
                         print(f"Test write failed: {e}")
                     
                     # Stay connected until disconnection occurs naturally
-                    while client.is_connected:
+                    while await client.is_connected():
                         await asyncio.sleep(1)  # Poll connection state every second
                     
                     print(f"Disconnected from {device_to_connect.address}")
